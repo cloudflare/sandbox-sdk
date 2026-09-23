@@ -81,7 +81,8 @@ import type {
   SandboxTransport,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
-  SandboxWatchAPI
+  SandboxWatchAPI,
+  WatchRequest
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
@@ -95,7 +96,9 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import type { SandboxClient } from '../clients/sandbox-client';
+import { WatchClient, watchLocalMountRoute } from '../clients/watch-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import { OperationInterruptedError, SandboxError } from '../errors/classes';
 import {
@@ -784,8 +787,9 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
 /**
  * SandboxClient-compatible facade backed by direct capnweb RPC.
  *
- * All operations call the container's SandboxAPI control interface directly
- * over capnweb, bypassing the HTTP handler/router layer entirely.
+ * Public operations call the container's SandboxAPI control interface directly
+ * over capnweb. Internal local mount watches use the Durable Object fetch path
+ * so the active mount registry authorizes the exact watch root.
  *
  * Manages its own WebSocket lifecycle: a fresh `ContainerControlConnection` is
  * created on demand and torn down after `idleDisconnectMs` of inactivity.
@@ -802,6 +806,8 @@ export class ContainerControlClient {
   private readonly onActivity: (() => void) | undefined;
   private readonly onSessionBusy: (() => void) | undefined;
   private readonly onSessionIdle: (() => void) | undefined;
+  private readonly mountWatchClient: WatchClient;
+  private readonly mountWatchFetch: (request: Request) => Promise<Response>;
 
   private conn: ContainerControlConnection | null = null;
   /**
@@ -886,6 +892,11 @@ export class ContainerControlClient {
     this.onActivity = options.onActivity;
     this.onSessionBusy = options.onSessionBusy;
     this.onSessionIdle = options.onSessionIdle;
+    this.mountWatchClient = new WatchClient({
+      baseUrl: `http://localhost:${options.port ?? 3000}`,
+      logger: options.logger
+    });
+    this.mountWatchFetch = (request) => options.stub.fetch(request);
   }
 
   // -------------------------------------------------------------------------
@@ -1227,6 +1238,15 @@ export class ContainerControlClient {
       this.getLastConnectionError,
       this.getSessionEstablished,
       this.getSpanAttrs
+    );
+  }
+  [WATCH_LOCAL_MOUNT](
+    request: WatchRequest
+  ): Promise<ReadableStream<Uint8Array>> {
+    return watchLocalMountRoute(
+      this.mountWatchClient,
+      request,
+      this.mountWatchFetch
     );
   }
   get tunnels(): SandboxTunnelsAPI {

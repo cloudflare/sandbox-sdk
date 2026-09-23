@@ -1,5 +1,8 @@
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WatchClient } from '../src/clients/watch-client';
+import { SandboxClient } from '../src/clients/sandbox-client';
+import { WatchClient, watchLocalMountRoute } from '../src/clients/watch-client';
+import { UnsupportedMountWatchError } from '../src/watch-capability';
 
 describe('WatchClient', () => {
   let client: WatchClient;
@@ -19,6 +22,148 @@ describe('WatchClient', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('should post mount watches to the internal endpoint', async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                'data: {"type":"watching","path":"/data","watchId":"watch-1"}\n\n'
+              )
+            );
+            controller.close();
+          }
+        }),
+        { status: 200 }
+      )
+    );
+
+    await watchLocalMountRoute(client, { path: '/data', recursive: true });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://test.com/api/watch/mount',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: '/data', recursive: true })
+      })
+    );
+  });
+
+  it('should use the Durable Object fetch boundary when provided', async () => {
+    const encoder = new TextEncoder();
+    const doFetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"type":"watching","path":"/data","watchId":"watch-1"}\n\n'
+                )
+              );
+              controller.close();
+            }
+          }),
+          { status: 200 }
+        )
+    );
+
+    await watchLocalMountRoute(
+      client,
+      { path: '/data', recursive: true },
+      doFetch
+    );
+
+    expect(doFetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        url: 'http://test.com/api/watch/mount'
+      })
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should bypass WebSocket multiplexing for mount watches', async () => {
+    const encoder = new TextEncoder();
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"type":"watching","path":"/data","watchId":"watch-1"}\n\n'
+                )
+              );
+              controller.close();
+            }
+          }),
+          { status: 200 }
+        )
+    );
+    const containerFetch = vi.fn();
+    const sandboxClient = new SandboxClient({
+      transportMode: 'websocket',
+      wsUrl: 'ws://localhost:3000/ws',
+      stub: { fetch, containerFetch }
+    });
+
+    await sandboxClient[WATCH_LOCAL_MOUNT]({ path: '/data' });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(containerFetch).not.toHaveBeenCalled();
+  });
+
+  it('should preserve missing route capability errors in WebSocket mode', async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: 'UNKNOWN_ERROR',
+            message: 'The requested endpoint was not found',
+            context: {},
+            httpStatus: 404,
+            timestamp: new Date().toISOString()
+          }),
+          { status: 404 }
+        )
+    );
+    const sandboxClient = new SandboxClient({
+      transportMode: 'websocket',
+      wsUrl: 'ws://localhost:3000/ws',
+      stub: { fetch, containerFetch: vi.fn() }
+    });
+
+    await expect(
+      sandboxClient[WATCH_LOCAL_MOUNT]({ path: '/data' })
+    ).rejects.toBeInstanceOf(UnsupportedMountWatchError);
+  });
+
+  it('should not expose mount watches on the route client', () => {
+    expect('watchMount' in client).toBe(false);
+  });
+
+  it('should translate a missing mount route at the transport boundary', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 'UNKNOWN_ERROR',
+          message: 'The requested endpoint was not found',
+          context: {},
+          httpStatus: 404,
+          timestamp: new Date().toISOString()
+        }),
+        { status: 404 }
+      )
+    );
+
+    await expect(
+      watchLocalMountRoute(client, { path: '/data' })
+    ).rejects.toBeInstanceOf(UnsupportedMountWatchError);
   });
 
   it('should post to the retained change check endpoint', async () => {

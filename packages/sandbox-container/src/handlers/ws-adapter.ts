@@ -137,6 +137,19 @@ export class WebSocketAdapter {
     const request = parsed as WSRequest;
 
     try {
+      const pathname = new URL(request.path, `http://localhost:${SERVER_PORT}`)
+        .pathname;
+      if (pathname === '/api/watch/mount') {
+        this.sendError(
+          ws,
+          request.id,
+          'PERMISSION_DENIED',
+          'Mount watch requests require Durable Object authorization',
+          403
+        );
+        return;
+      }
+
       await this.handleRequest(ws, request);
     } catch (error) {
       this.logger.error(

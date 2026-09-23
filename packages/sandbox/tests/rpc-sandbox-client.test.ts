@@ -97,6 +97,7 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import {
   ContainerControlClient,
   translateRPCError
@@ -118,6 +119,58 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('routes mount watches through the Durable Object fetch boundary', async () => {
+    const encoder = new TextEncoder();
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"type":"watching","path":"/data","watchId":"watch-1"}\n\n'
+                )
+              );
+              controller.close();
+            }
+          }),
+          { status: 200 }
+        )
+    );
+    const client = new ContainerControlClient({ stub: { fetch } });
+
+    await client[WATCH_LOCAL_MOUNT]({ path: '/data' });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        url: 'http://localhost:3000/api/watch/mount'
+      })
+    );
+    expect(onCloseHandlers).toHaveLength(0);
+  });
+
+  it('translates a missing mount route into a capability error', async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: 'UNKNOWN_ERROR',
+            message: 'The requested endpoint was not found',
+            context: {},
+            httpStatus: 404,
+            timestamp: new Date().toISOString()
+          }),
+          { status: 404 }
+        )
+    );
+    const client = new ContainerControlClient({ stub: { fetch } });
+
+    await expect(
+      client[WATCH_LOCAL_MOUNT]({ path: '/data' })
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
   });
 
   it('keeps the session marked busy while a stream export is held', () => {
