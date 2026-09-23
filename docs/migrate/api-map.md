@@ -138,12 +138,15 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 
 ## Backups
 
-| 0.12                                                                      | Kind    | Replacement                                                      | Notes                                                   |
-| ------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------- | ------------------------------------------------------- |
-| `createBackup()`, `restoreBackup()`                                       | Native  | `container.snapshotDirectory()`, `container.snapshotContainer()` | [Checkpoint a workspace](../checkpoint-a-workspace.md). |
-| `gitignore`, `excludes`, `ttl`, `compression`, `multipart`, `localBucket` | Removed | —                                                                |                                                         |
-| `BACKUP_BUCKET`, `BACKUP_BUCKET_NAME`, `BACKUP_BUCKET_ENDPOINT`           | Removed | —                                                                |                                                         |
-| `BackupCreateError`, `BackupRestoreError`, and other backup errors        | Removed | Native snapshot errors                                           |                                                         |
+| 0.12                                                               | Kind    | Replacement                                                | Notes                                                                       |
+| ------------------------------------------------------------------ | ------- | ---------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `createBackup()`, `restoreBackup()`                                | Pattern | `tar` in the Container, streamed to and from an R2 binding | For the whole disk, `container.snapshotContainer()`. [Backups](backups.md). |
+| `name`, `ttl`, `gitignore`, `excludes`, `compression`              | Pattern | Options in the backup example                              | An alarm deletes expired backups. [Backups](backups.md).                    |
+| `multipart`, `localBucket`                                         | Removed | One upload through an R2 binding                           | `wrangler dev` simulates the binding locally. [Backups](backups.md).        |
+| `BACKUP_BUCKET`                                                    | Native  | An R2 binding                                              | Keep the name or rename it. [Backups](backups.md).                          |
+| `BACKUP_BUCKET_NAME`, `BACKUP_BUCKET_ENDPOINT`, R2 access keys     | Removed | The R2 binding                                             | The Container never holds bucket credentials. [Backups](backups.md).        |
+| `BackupCreateError`, `BackupRestoreError`, and other backup errors | Pattern | `tar` exit codes and R2 binding errors                     | [Backups](backups.md).                                                      |
+| Backups made by 0.12                                               | Pattern | `unsquashfs` on `backups/<id>/data.sqsh`                   | [Backups](backups.md).                                                      |
 
 ## Code interpreter and subpath packages
 
