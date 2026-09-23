@@ -37,7 +37,7 @@ describe("Files.writeFile", () => {
       {
         cwd: "/workspace",
         user: "1000:1000",
-        signal,
+        signal: expect.any(AbortSignal),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "ignore",

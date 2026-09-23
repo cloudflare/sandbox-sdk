@@ -76,11 +76,11 @@ Remove a file or symlink. Directories need `recursive: true`. Recursive remove d
 
 ### Options
 
-| Field    | Type          | Description                                          |
-| -------- | ------------- | ---------------------------------------------------- |
-| `cwd`    | `string`      | Absolute directory used to resolve a relative `path` |
-| `user`   | `string`      | Linux user, or `user:group`                          |
-| `signal` | `AbortSignal` | AbortSignal passed through to `container.exec()`     |
+| Field    | Type          | Description                                                                  |
+| -------- | ------------- | ---------------------------------------------------------------------------- |
+| `cwd`    | `string`      | Absolute directory used to resolve a relative `path`                         |
+| `user`   | `string`      | Linux user, or `user:group`                                                  |
+| `signal` | `AbortSignal` | Stops the operation, and kills its process if the operation is still running |
 
 These fields are `FileOperationOptions`. `MkdirOptions` also has `recursive`. `RemoveOptions` also has `recursive` and `force`. For `rename`, `cwd` resolves both paths.
 

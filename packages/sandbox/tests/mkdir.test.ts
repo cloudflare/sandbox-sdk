@@ -19,7 +19,7 @@ describe("Files.mkdir", () => {
       {
         cwd: "/workspace",
         user: "1000:1000",
-        signal,
+        signal: expect.any(AbortSignal),
         stdout: "pipe",
         stderr: "ignore",
       },

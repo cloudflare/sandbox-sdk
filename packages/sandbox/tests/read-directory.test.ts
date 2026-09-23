@@ -61,7 +61,7 @@ describe("Files.readDirectory", () => {
       {
         cwd: "/home",
         user: "1000:1000",
-        signal,
+        signal: expect.any(AbortSignal),
         stdout: "pipe",
         stderr: "ignore",
       },

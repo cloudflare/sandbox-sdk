@@ -110,9 +110,9 @@ Canceling `mount()` or `unmount()` after intercept setup can leave a healthy fil
 
 ### `S3MountOperationOptions`
 
-| Field    | Type          | Description                                            |
-| -------- | ------------- | ------------------------------------------------------ |
-| `signal` | `AbortSignal` | Passed through to `container.exec()` and inspect waits |
+| Field    | Type          | Description                                                                                           |
+| -------- | ------------- | ----------------------------------------------------------------------------------------------------- |
+| `signal` | `AbortSignal` | Stops the operation, including inspect waits, and kills its process if the operation is still running |
 
 Abort reasons, native `exec()` failures, and transport failures are not wrapped.
 

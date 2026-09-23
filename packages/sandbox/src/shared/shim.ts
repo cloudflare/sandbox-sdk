@@ -22,20 +22,29 @@ export type ShimControlFrame =
   | { readonly kind: "data"; readonly payload: Uint8Array };
 
 class AbortMonitor {
+  /**
+   * Follows the caller's signal until the shim settles. The caller's signal can outlive the
+   * call, as AbortSignal.timeout() does, and signalling an exited process logs a runtime error.
+   */
+  readonly signal: AbortSignal | undefined;
   readonly #promise: Promise<never> | undefined;
   #dispose: () => void = () => undefined;
 
   constructor(signal: AbortSignal | undefined) {
     if (signal === undefined) return;
+    const linked = new AbortController();
+    this.signal = linked.signal;
 
     this.#promise = new Promise<never>((_, reject) => {
       if (signal.aborted) {
+        linked.abort(signal.reason);
         reject(signal.reason);
         return;
       }
 
       const onAbort = () => {
         this.dispose();
+        linked.abort(signal.reason);
         reject(signal.reason);
       };
       signal.addEventListener("abort", onAbort, { once: true });
@@ -72,7 +81,9 @@ export class ShimSession {
   ): Promise<ShimSession> {
     const abort = new AbortMonitor(options.signal);
     try {
-      const process = await abort.waitFor(container.exec(command, options));
+      const process = await abort.waitFor(
+        container.exec(command, { ...options, signal: abort.signal }),
+      );
       return new ShimSession(process, abort);
     } catch (error) {
       abort.dispose();

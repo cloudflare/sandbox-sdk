@@ -32,7 +32,7 @@ describe("Files.readFile", () => {
       {
         cwd: "/workspace",
         user: "1000:1000",
-        signal,
+        signal: expect.any(AbortSignal),
         stdout: "pipe",
         stderr: "pipe",
       },
@@ -226,9 +226,8 @@ describe("Files.readFile", () => {
       stdout,
       readableChunks([SUCCESS_HEADER], false),
     );
-    const response = await new Files(containerWith(process)).readFile("/file", {
-      signal: abort.signal,
-    });
+    const container = containerWith(process);
+    const response = await new Files(container).readFile("/file", { signal: abort.signal });
     const body = response.arrayBuffer();
 
     await pullStarted.promise;
@@ -236,6 +235,20 @@ describe("Files.readFile", () => {
 
     await expect(body).rejects.toBe(reason);
     expect(process.kill).toHaveBeenCalledWith(9);
+    const execOptions: ContainerExecOptions = container.exec.mock.calls[0][1];
+    expect(execOptions.signal?.reason).toBe(reason);
+  });
+
+  it("stops following the caller's signal once the read finishes", async () => {
+    const abort = new AbortController();
+    const container = containerWith(readProcess(successFrame()));
+    const response = await new Files(container).readFile("/file", { signal: abort.signal });
+    await response.arrayBuffer();
+
+    abort.abort();
+
+    const execOptions: ContainerExecOptions = container.exec.mock.calls[0][1];
+    expect(execOptions.signal?.aborted).toBe(false);
   });
 
   it("rejects missing native process streams", async () => {
