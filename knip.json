@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "entry": ["examples/*/src/index.ts"],
-      "ignore": ["tools/oxlint/anti-slop/**"],
+      "ignore": ["examples/*/app/**", "tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["cloudflare"]
     },
     "packages/sandbox": {

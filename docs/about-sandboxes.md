@@ -40,6 +40,8 @@ An S3 mount is part of that sandbox, not a shared volume across jobs. See [Mount
 
 The `ExecProcess` handle lives in this Durable Object isolate. If the request is canceled after `exec()` returns, the process may still be running.
 
+A background process with piped output stops once the request that started it ends. Its next write gets `SIGPIPE`. Start long-running processes with `stdout: "ignore"` and `stderr: "ignore"`, and redirect their output to a file.
+
 ## Inactivity
 
 `setInactivityTimeout()` applies to the Durable Object instance that calls it. A restarted instance does not inherit it. If that instance reaches the Container without setting a timeout, the Container stops after the platform default once the instance goes idle. Set the timeout whenever a new instance finds the Container running, for example in the constructor.

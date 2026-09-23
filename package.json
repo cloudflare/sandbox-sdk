@@ -17,6 +17,8 @@
     "example:artifact-workspace:types": "npx --yes wrangler@4.131.2 types examples/artifact-workspace/worker-configuration.d.ts --config examples/artifact-workspace/wrangler.jsonc --include-runtime=false",
     "example:checkpoint-workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/checkpoint-workspace/wrangler.jsonc",
     "example:checkpoint-workspace:types": "npx --yes wrangler@4.131.2 types examples/checkpoint-workspace/worker-configuration.d.ts --config examples/checkpoint-workspace/wrangler.jsonc --include-runtime=false",
+    "example:preview-workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/preview-workspace/wrangler.jsonc",
+    "example:preview-workspace:types": "npx --yes wrangler@4.131.2 types examples/preview-workspace/worker-configuration.d.ts --config examples/preview-workspace/wrangler.jsonc --include-runtime=false",
     "knip": "knip",
     "shim:build": "docker build --platform linux/amd64 --target image --tag sandbox-tools:local --file images/sandbox-tools/Dockerfile .",
     "shim:check": "docker build --platform linux/amd64 --target verify --file images/sandbox-tools/Dockerfile .",
