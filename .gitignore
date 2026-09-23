@@ -4,4 +4,5 @@ target/
 .vite/
 .wrangler/
 examples/*/worker-configuration.d.ts
+examples/coding-agents/*/worker-configuration.d.ts
 *.tsbuildinfo
