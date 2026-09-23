@@ -1,6 +1,11 @@
 import { Container, getContainer } from '@cloudflare/containers';
 import type * as SharedRoot from '@repo/shared';
-import type { ISandbox, ProcessLogEvent, ProcessStatus } from '@repo/shared';
+import type {
+  ISandbox,
+  ProcessLogEvent,
+  ProcessStatus,
+  SandboxCommand
+} from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
 import {
@@ -780,22 +785,29 @@ describe('Sandbox durable object behavior', () => {
       ).not.toHaveBeenCalled();
     });
 
-    it('logs launch identity without an exit code', async () => {
+    it('logs launch identity without argument text or an exit code', async () => {
       const infoSpy = vi.spyOn((sandbox as any).logger, 'info');
-      vi.spyOn(
-        asSandboxWithClient(sandbox).client.processes,
-        'start'
-      ).mockResolvedValueOnce({
-        id: 'logged-process',
-        pid: 456,
-        command: ['echo', 'test_logging'],
-        state: 'exited',
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        exit: { code: 42, timedOut: false }
-      });
+      const errorSpy = vi.spyOn((sandbox as any).logger, 'error');
+      const argv: SandboxCommand = [
+        'curl',
+        '-H',
+        'Authorization: Bearer secret-token',
+        'https://example.com'
+      ];
+      vi.spyOn(asSandboxWithClient(sandbox).client.processes, 'start')
+        .mockResolvedValueOnce({
+          id: 'logged-process',
+          pid: 456,
+          command: argv,
+          state: 'exited',
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          exit: { code: 42, timedOut: false }
+        })
+        .mockRejectedValueOnce(new Error('spawn failed'));
 
-      const descriptor = await sandbox.exec(['echo', 'test_logging']);
+      const descriptor = await sandbox.exec(argv);
+      await expect(sandbox.exec(argv)).rejects.toThrow();
 
       expect(descriptor.id).toBe('logged-process');
       expect(infoSpy).toHaveBeenCalledWith(
@@ -803,17 +815,35 @@ describe('Sandbox durable object behavior', () => {
         expect.not.objectContaining({ exitCode: expect.anything() })
       );
       expect(infoSpy).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringMatching(/^sandbox\.exec success curl \(\d+ms\)$/),
         expect.objectContaining({
           event: 'sandbox.exec',
           outcome: 'success',
-          command: 'echo test_logging',
+          argv0: 'curl',
+          argCount: 3,
           processId: 'logged-process',
           pid: 456
         })
       );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Error),
+        expect.objectContaining({
+          event: 'sandbox.exec',
+          outcome: 'error',
+          argv0: 'curl',
+          argCount: 3
+        })
+      );
+      const logged = JSON.stringify([
+        ...infoSpy.mock.calls,
+        ...errorSpy.mock.calls
+      ]);
+      expect(logged).not.toContain('secret-token');
+      expect(logged).not.toContain('Authorization');
 
       infoSpy.mockRestore();
+      errorSpy.mockRestore();
     });
 
     it('returns null for inactive discovery without starting the runtime', async () => {

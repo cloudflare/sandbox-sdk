@@ -95,21 +95,3 @@ export function redactSensitiveParams(input: string): string {
 export function redactCommand(command: string): string {
   return redactSensitiveParams(redactCredentials(command));
 }
-
-/**
- * Truncate a string for log output with a truncation indicator
- *
- * @param value - String to potentially truncate
- * @param maxLen - Maximum length before truncation (default 120)
- * @returns Object with truncated value and boolean flag
- */
-export function truncateForLog(
-  value: string,
-  maxLen = 120
-): { value: string; truncated: boolean } {
-  if (value.length <= maxLen) {
-    return { value, truncated: false };
-  }
-  const cutoff = Math.max(0, maxLen - 3);
-  return { value: `${value.substring(0, cutoff)}...`, truncated: true };
-}

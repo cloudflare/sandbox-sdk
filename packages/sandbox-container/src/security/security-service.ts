@@ -174,10 +174,7 @@ export class SecurityService {
     }));
 
     if (!isValid) {
-      this.logger.warn('Command validation failed', {
-        command: trimmedCommand,
-        errors
-      });
+      this.logger.warn('Command validation failed', { errors });
     }
 
     if (isValid) {
