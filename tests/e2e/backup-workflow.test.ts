@@ -1217,6 +1217,73 @@ describe('Backup Workflow E2E', () => {
       // Cleanup
       await cleanupDir(workerUrl, headers, TEST_DIR);
     }, 90000);
+
+    test('should create files in a restored directory after it is deleted, recreated and listed', async () => {
+      if (!backupBucketAvailable) return;
+
+      const TEST_DIR = `/workspace/recreate-dir-test-${crypto.randomUUID().slice(0, 8)}`;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR}/src && echo "original" > ${TEST_DIR}/src/file.txt`
+          ]
+        })
+      });
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ dir: TEST_DIR })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf ${TEST_DIR}/*`]
+        })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      // Mirrors git recreating a directory while a file watcher lists it.
+      // noclobber makes the redirect an exclusive create, as git does.
+      const recreateResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            '/bin/bash',
+            '-lc',
+            [
+              `rm -rf ${TEST_DIR}/src`,
+              `mkdir ${TEST_DIR}/src`,
+              `ls ${TEST_DIR}/src`,
+              `(set -C; echo "recreated" > ${TEST_DIR}/src/file.txt)`,
+              `cat ${TEST_DIR}/src/file.txt`
+            ].join(' && ')
+          ]
+        })
+      });
+      const recreateResult = (await recreateResponse.json()) as ExecuteResponse;
+      expect(recreateResult.stderr).toBe('');
+      expect(recreateResult.exitCode).toBe(0);
+      expect(recreateResult.stdout?.trim()).toBe('recreated');
+
+      await cleanupDir(workerUrl, headers, TEST_DIR);
+    }, 90000);
   });
 
   describe('Cleanup after failed restore', () => {
