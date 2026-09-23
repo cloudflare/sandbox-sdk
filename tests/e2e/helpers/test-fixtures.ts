@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { expect } from 'vitest';
 
 /**
  * Generate unique sandbox ID for test isolation
@@ -105,6 +106,18 @@ export async function fetchOrTimeout(
   );
 
   return await Promise.race([fetchPromise, timeoutPromise]);
+}
+
+/**
+ * Assert that a response is OK, reporting its status and body otherwise.
+ *
+ * The test worker returns the underlying error message in the body, so it
+ * identifies why a request failed where `expect(response.ok)` cannot.
+ */
+export async function expectOK(response: Response): Promise<void> {
+  if (response.ok) return;
+  const body = await response.text();
+  expect.fail(`Expected OK response, got ${response.status}: ${body}`);
 }
 
 /**

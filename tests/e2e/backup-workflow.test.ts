@@ -5,6 +5,7 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { expectOK } from './helpers/test-fixtures';
 
 // Response types for type assertions
 interface BackupResponse {
@@ -117,7 +118,7 @@ describe('Backup Workflow E2E', () => {
           command: `mkdir -p ${TEST_DIR} && echo "${TEST_CONTENT}" > ${TEST_DIR}/${TEST_FILE}`
         })
       });
-      expect(mkdirResponse.ok).toBe(true);
+      await expectOK(mkdirResponse);
 
       // Step 2: Create backup
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
@@ -147,7 +148,7 @@ describe('Backup Workflow E2E', () => {
           command: `rm -rf ${TEST_DIR}/*`
         })
       });
-      expect(deleteResponse.ok).toBe(true);
+      await expectOK(deleteResponse);
 
       // Verify files are gone
       const checkDeletedResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -170,7 +171,7 @@ describe('Backup Workflow E2E', () => {
           dir: TEST_DIR
         })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       const restoreResult = (await restoreResponse.json()) as RestoreResponse;
       expect(restoreResult.success).toBe(true);
@@ -212,7 +213,7 @@ describe('Backup Workflow E2E', () => {
           ].join(' && ')
         })
       });
-      expect(setupResponse.ok).toBe(true);
+      await expectOK(setupResponse);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
@@ -221,7 +222,7 @@ describe('Backup Workflow E2E', () => {
           dir: TEST_DIR
         })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       await fetch(`${workerUrl}/api/execute`, {
@@ -237,7 +238,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
@@ -276,7 +277,7 @@ describe('Backup Workflow E2E', () => {
           ].join(' && ')
         })
       });
-      expect(setupResponse.ok).toBe(true);
+      await expectOK(setupResponse);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
@@ -286,7 +287,7 @@ describe('Backup Workflow E2E', () => {
           gitignore: false
         })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       await fetch(`${workerUrl}/api/execute`, {
@@ -302,7 +303,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
@@ -338,14 +339,14 @@ describe('Backup Workflow E2E', () => {
           ].join(' && ')
         })
       });
-      expect(setupResponse.ok).toBe(true);
+      await expectOK(setupResponse);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ dir: TEST_DIR })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       await fetch(`${workerUrl}/api/execute`, {
@@ -361,7 +362,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
@@ -402,14 +403,14 @@ describe('Backup Workflow E2E', () => {
           ].join(' && ')
         })
       });
-      expect(setupResponse.ok).toBe(true);
+      await expectOK(setupResponse);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ dir: TEST_DIR, gitignore: true })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       await fetch(`${workerUrl}/api/execute`, {
@@ -425,7 +426,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
@@ -467,7 +468,7 @@ describe('Backup Workflow E2E', () => {
           ].join(' && ')
         })
       });
-      expect(setupResponse.ok).toBe(true);
+      await expectOK(setupResponse);
 
       // Step 2: Record file checksums before backup
       const checksumBeforeResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -509,7 +510,7 @@ describe('Backup Workflow E2E', () => {
           command: `rm -rf ${PROJECT_DIR}/*`
         })
       });
-      expect(deleteResponse.ok).toBe(true);
+      await expectOK(deleteResponse);
 
       // Verify files are gone
       const verifyDeletedResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -532,7 +533,7 @@ describe('Backup Workflow E2E', () => {
           dir: PROJECT_DIR
         })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Step 6: Verify checksums match
       const checksumAfterResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -572,7 +573,7 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({ dir: EMPTY_DIR })
       });
 
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       // Delete and restore
@@ -587,7 +588,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: EMPTY_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Verify directory exists
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -630,7 +631,7 @@ describe('Backup Workflow E2E', () => {
         })
       });
 
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       // Wait for backup to expire (TTL + buffer = 61+ seconds)
@@ -754,8 +755,8 @@ describe('Backup Workflow E2E', () => {
         })
       ]);
 
-      expect(backupA.ok).toBe(true);
-      expect(backupB.ok).toBe(true);
+      await expectOK(backupA);
+      await expectOK(backupB);
 
       const backupDataA = (await backupA.json()) as BackupResponse;
       const backupDataB = (await backupB.json()) as BackupResponse;
@@ -786,8 +787,8 @@ describe('Backup Workflow E2E', () => {
         })
       ]);
 
-      expect(restoreA.ok).toBe(true);
-      expect(restoreB.ok).toBe(true);
+      await expectOK(restoreA);
+      await expectOK(restoreB);
 
       // Verify content is correct (not mixed up)
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -855,7 +856,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Verify all files exist and have correct content
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -899,7 +900,7 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({ dir: ORIGINAL_DIR })
       });
 
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       // Restore to DIFFERENT location
@@ -908,7 +909,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: RESTORE_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Verify content exists in new location
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -959,7 +960,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ dir: TEST_DIR })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       // Delete and restore
@@ -974,7 +975,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Write NEW content to restored directory (should use COW)
       await fetch(`${workerUrl}/api/execute`, {
@@ -1005,7 +1006,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restore2Response.ok).toBe(true);
+      await expectOK(restore2Response);
 
       // Verify original content is back
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
@@ -1049,7 +1050,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ dir: TEST_DIR })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       await fetch(`${workerUrl}/api/execute`, {
@@ -1063,7 +1064,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      expect(restoreResponse.ok).toBe(true);
+      await expectOK(restoreResponse);
 
       // Mirrors git recreating a directory while a file watcher lists it.
       // noclobber makes the redirect an exclusive create, as git does.
@@ -1109,7 +1110,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ dir: TEST_DIR })
       });
-      expect(backupResponse.ok).toBe(true);
+      await expectOK(backupResponse);
       const backup = (await backupResponse.json()) as BackupResponse;
 
       // Clean the test dir
@@ -1159,7 +1160,7 @@ describe('Backup Workflow E2E', () => {
           body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
         }
       );
-      expect(validRestoreResponse.ok).toBe(true);
+      await expectOK(validRestoreResponse);
 
       // Verify content
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
