@@ -323,5 +323,7 @@ jobs:
         uses: changesets/action@v1
         with:
           version: npx tsx .github/changeset-version.ts
+          # Push as the app so the version PR's updates trigger PR workflows.
+          commitMode: github-api
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
