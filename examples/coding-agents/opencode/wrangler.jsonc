@@ -1,0 +1,46 @@
+{
+  "name": "sandbox-coding-agent-opencode-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  // Files resolves native Linux errno names through node:os.
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AI_GATEWAY_ACCOUNT_ID": "replace-with-your-account-id",
+    "AI_GATEWAY_ID": "default",
+    "MODEL": "cloudflare-ai-gateway/anthropic/claude-sonnet-5",
+  },
+  "secrets": {
+    "required": ["AI_GATEWAY_TOKEN"],
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "OpencodeSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "OpencodeSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "OpencodeSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}

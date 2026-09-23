@@ -25,6 +25,8 @@
     "example:coding-agents:claude-code:types": "npx --yes wrangler@4.131.2 types examples/coding-agents/claude-code/worker-configuration.d.ts --config examples/coding-agents/claude-code/wrangler.jsonc --include-runtime=false",
     "example:coding-agents:codex:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/coding-agents/codex/wrangler.jsonc",
     "example:coding-agents:codex:types": "npx --yes wrangler@4.131.2 types examples/coding-agents/codex/worker-configuration.d.ts --config examples/coding-agents/codex/wrangler.jsonc --include-runtime=false",
+    "example:coding-agents:opencode:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/coding-agents/opencode/wrangler.jsonc",
+    "example:coding-agents:opencode:types": "npx --yes wrangler@4.131.2 types examples/coding-agents/opencode/worker-configuration.d.ts --config examples/coding-agents/opencode/wrangler.jsonc --include-runtime=false",
     "knip": "knip",
     "shim:build": "docker build --platform linux/amd64 --target image --tag sandbox-tools:local --file images/sandbox-tools/Dockerfile .",
     "shim:check": "docker build --platform linux/amd64 --target verify --file images/sandbox-tools/Dockerfile .",
