@@ -153,7 +153,7 @@ Read each result with `output()`. Both commands exit with a nonzero code when th
 
 - Authenticate every request. The page gives anyone who opens it a `root` shell in the named sandbox. Derive the sandbox name from the caller's identity.
 - Sessions end when the Container stops, for example after its inactivity timeout. Use [background processes](run-background-processes.md) for work that must be tracked, or must keep the Container awake, while nobody is connected.
-- Pass the `user` option to the tmux client's `exec()` if people should not be `root`.
+- Pass numeric user and group IDs in the `user` option of the tmux client's `exec()`, such as `user: "1000:1000"`, if people should not be `root`. A user ID without a group ID runs as `root`.
 - Keep `enableInternet: false`, or route outbound requests through a Worker that allows only the hosts people need.
 - `WebSocket.send()` does not wait for the browser. A command that prints without stopping, such as `yes`, buffers output in the Durable Object.
 - Serve xterm.js from static assets instead of a CDN.

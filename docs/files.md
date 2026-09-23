@@ -79,10 +79,10 @@ Remove a file or symlink. Directories need `recursive: true`. Recursive remove d
 | Field    | Type          | Description                                                                  |
 | -------- | ------------- | ---------------------------------------------------------------------------- |
 | `cwd`    | `string`      | Absolute directory used to resolve a relative `path`                         |
-| `user`   | `string`      | Linux user, or `user:group`                                                  |
+| `user`   | `string`      | Numeric user and group IDs, as `uid:gid`, such as `1000:1000`                |
 | `signal` | `AbortSignal` | Stops the operation, and kills its process if the operation is still running |
 
-These fields are `FileOperationOptions`. `MkdirOptions` also has `recursive`. `RemoveOptions` also has `recursive` and `force`. For `rename`, `cwd` resolves both paths.
+Pass both IDs in `user`. A user ID without a group ID runs as `root`, and a user or group name fails with an internal error. These fields are `FileOperationOptions`. `MkdirOptions` also has `recursive`. `RemoveOptions` also has `recursive` and `force`. For `rename`, `cwd` resolves both paths.
 
 `path` must be non-empty and must not contain `NUL`. A relative `path` needs `cwd`. `cwd` must be absolute. Violations throw `TypeError`.
 

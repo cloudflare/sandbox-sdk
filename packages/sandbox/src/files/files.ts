@@ -12,7 +12,10 @@ import { writeFile as writeContainerFile } from "./write-file.js";
 export interface FileOperationOptions {
   /** Working directory used to resolve a relative path. */
   cwd?: string;
-  /** Linux user or user/group pair used to open the file. */
+  /**
+   * Numeric user and group IDs that open the file, as `uid:gid`. A user ID alone runs as root,
+   * and names fail.
+   */
   user?: string;
   /** Cancels the native container process without imposing a timeout. */
   signal?: AbortSignal;
