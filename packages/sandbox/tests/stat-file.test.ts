@@ -120,6 +120,27 @@ describe("Files stat operations", () => {
     });
   });
 
+  it("waits for a shim that reported a filesystem error instead of killing it", async () => {
+    const process = commandProcess(errorFrame(2, "No such file or directory"));
+
+    await expect(new Files(containerWith(process)).stat("/missing")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(process.kill).not.toHaveBeenCalled();
+  });
+
+  it("keeps a reported filesystem error when the exit status is lost", async () => {
+    const process = commandProcess(
+      errorFrame(2, "No such file or directory"),
+      Promise.reject(new Error("Network connection lost.")),
+    );
+
+    await expect(new Files(containerWith(process)).stat("/missing")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(process.kill).toHaveBeenCalledWith(9);
+  });
+
   it("rejects malformed metadata", async () => {
     const wrongLength = commandProcess(dataFrame(new Uint8Array(44)));
     const unknownType = commandProcess(dataFrame(statPayload({ type: 9 })));

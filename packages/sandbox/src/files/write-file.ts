@@ -39,7 +39,10 @@ export async function writeFile(
     input = session.openStdinWriter();
 
     const opening = await control.readFrame();
-    if (opening.kind === "fileError") await control.expectEnd();
+    if (opening.kind === "fileError") {
+      await control.expectEnd();
+      await session.settle();
+    }
     expectSuccess(opening, path);
 
     sourceReader = source.getReader();
@@ -130,6 +133,7 @@ async function terminalResult(session: ShimSession, control: ShimControl): Promi
   try {
     const frame = await control.readFrame();
     await control.expectEnd();
+    if (frame.kind === "fileError") await session.settle();
     return { kind: "frame", frame };
   } catch (error) {
     return { kind: "failure", error };

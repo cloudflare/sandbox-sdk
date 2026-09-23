@@ -122,7 +122,7 @@ describe("Files.writeFile", () => {
     expect(cancelled).toHaveBeenCalledWith(
       expect.objectContaining({ name: "SandboxFileError", code: "EISDIR" }),
     );
-    expect(process.kill).toHaveBeenCalledWith(9);
+    expect(process.kill).not.toHaveBeenCalled();
   });
 
   it("maps terminal filesystem errors", async () => {
@@ -137,7 +137,7 @@ describe("Files.writeFile", () => {
       operation: "writeFile",
       path: "/file",
     });
-    expect(process.kill).toHaveBeenCalledWith(9);
+    expect(process.kill).not.toHaveBeenCalled();
   });
 
   it("does not wait for more source data after a terminal filesystem error", async () => {
@@ -159,7 +159,7 @@ describe("Files.writeFile", () => {
       new Files(containerWith(process)).writeFile("/file", source),
     ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
     expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ code: "ENOSPC" }));
-    expect(process.kill).toHaveBeenCalledWith(9);
+    expect(process.kill).not.toHaveBeenCalled();
   });
 
   it("prefers a terminal filesystem error over the resulting stdin failure", async () => {

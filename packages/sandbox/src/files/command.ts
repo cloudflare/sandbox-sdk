@@ -31,6 +31,7 @@ export async function runFileCommand(
     const frame = await control.readFrame();
     await control.expectEnd();
     if (frame.kind === "fileError") {
+      await session.settle();
       throw fileErrorFromErrno(request.error, frame.errno, frame.detail);
     }
     if (frame.kind !== request.expected) {

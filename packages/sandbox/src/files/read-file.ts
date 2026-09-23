@@ -29,6 +29,7 @@ export async function readFile(
     const opening = await control.readFrame();
     if (opening.kind === "fileError") {
       await control.expectEnd();
+      await session.settle();
       throw fileErrorFromErrno({ operation: "readFile", path }, opening.errno, opening.detail);
     }
     if (opening.kind !== "success") {
@@ -65,6 +66,7 @@ function responseBody(
 
         const terminal = await session.waitFor(terminalFrame);
         if (terminal.kind === "fileError") {
+          await session.settle();
           throw fileErrorFromErrno(
             { operation: "readFile", path },
             terminal.errno,

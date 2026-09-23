@@ -118,6 +118,20 @@ export class ShimSession {
     this.#abort.dispose();
   }
 
+  /**
+   * Waits for a shim that already reported its outcome to exit, so cleanup does not signal an
+   * exited process. Never throws: the reported outcome stays authoritative, and if the exit is
+   * not observed, terminate() still cleans up.
+   */
+  async settle(): Promise<void> {
+    try {
+      await this.waitFor(this.process.exitCode);
+      this.finish();
+    } catch {
+      // Aborted, or the exit status was lost with the connection.
+    }
+  }
+
   terminate(): void {
     if (this.#settled) return;
     this.#settled = true;
