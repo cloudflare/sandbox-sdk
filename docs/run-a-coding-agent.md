@@ -26,7 +26,7 @@ CMD ["sleep", "infinity"]
 
 ## 2. Keep credentials in the Worker
 
-Route every HTTP and HTTPS request from the Container through a `WorkerEntrypoint`. It allows the hosts the task needs and adds their credentials. The Container never holds a real key.
+Route HTTP and HTTPS requests from the Container through a `WorkerEntrypoint`. It allows the hosts the task needs and adds their credentials. The Container never holds a real key. Only ports 80 and 443 are intercepted, and with `enableInternet: false`, connections to other ports time out.
 
 Done when a request from the Container to any other host returns `403`.
 

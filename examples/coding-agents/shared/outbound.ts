@@ -4,7 +4,8 @@ import type { CodingAgentEnv } from "./sandbox";
 
 const GATEWAY_HOST = "gateway.ai.cloudflare.com";
 
-// Every guest HTTP and HTTPS request reaches this entrypoint. Credentials stay in the Worker.
+// Guest HTTP on port 80 and HTTPS on port 443 reach this entrypoint; other ports have no route.
+// Credentials stay in the Worker.
 export class Outbound extends WorkerEntrypoint<CodingAgentEnv> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

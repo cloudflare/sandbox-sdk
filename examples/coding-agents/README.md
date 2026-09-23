@@ -15,12 +15,12 @@ Each agent directory is a separate Worker with its own image and `wrangler.jsonc
 
 ## Network access
 
-The Container has no internet access. An `Outbound` entrypoint in the Worker receives every HTTP and HTTPS request from the Container and allows two hosts:
+The Container has no internet access. An `Outbound` entrypoint in the Worker receives every HTTP request on port 80 and HTTPS request on port 443 from the Container, and allows two hosts:
 
 - `gateway.ai.cloudflare.com`, only under your account and gateway. The Worker adds the gateway token, so the Container never holds it.
 - `github.com`. The Worker adds `GITHUB_TOKEN` when it is set.
 
-Every other host gets `403`.
+Every other host gets `403`. Connections to other ports time out.
 
 ## Configure
 
