@@ -76,8 +76,10 @@ export async function runStableReleaseEngine(
   }
 }
 
-const REINSPECTION_ATTEMPTS = 7;
-const REINSPECTION_DELAY_MS = 5_000;
+// npm can take minutes to show a version after `npm publish` succeeds, so
+// reinspection waits up to five minutes for published state to appear.
+const REINSPECTION_ATTEMPTS = 31;
+const REINSPECTION_DELAY_MS = 10_000;
 
 async function reinspectUntilComplete(
   input: StableEngineInput,
