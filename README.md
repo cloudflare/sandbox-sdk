@@ -17,6 +17,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Preview a web app](docs/preview-a-web-app.md)
 - [Open a terminal in a sandbox](docs/open-a-terminal.md)
 - [Run a coding agent on a repository](docs/run-a-coding-agent.md)
+- [Migrate from the Sandbox class](docs/migrate/README.md)
 
 ## Examples
 
