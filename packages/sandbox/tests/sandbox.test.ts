@@ -3241,6 +3241,65 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(downloadCommand).not.toContain('.part0.tmp');
     });
 
+    it('should report and clean up a failed parallel download without exiting the session shell', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const expectedSize = 16 * 1024 * 1024;
+      const backupSession = 'backup-session';
+      const internals = backupSandbox as unknown as {
+        downloadBackupParallel: (
+          archivePath: string,
+          r2Key: string,
+          expectedSize: number,
+          backupId: string,
+          dir: string,
+          backupSession: string
+        ) => Promise<void>;
+        execWithSession: (
+          command: string,
+          sessionId: string,
+          options: { timeout?: number; origin: 'internal' }
+        ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+        generatePresignedGetURL: (r2Key: string) => Promise<string>;
+      };
+
+      vi.spyOn(internals, 'generatePresignedGetURL').mockResolvedValue(
+        'https://example.com/archive'
+      );
+      const execWithSessionSpy = vi
+        .spyOn(internals, 'execWithSession')
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({
+          stdout: '',
+          stderr: 'part failed',
+          exitCode: 1
+        })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
+
+      await expect(
+        internals.downloadBackupParallel(
+          '/var/backups/test.sqsh',
+          'backups/test/data.sqsh',
+          expectedSize,
+          'test-backup-id',
+          '/app/project',
+          backupSession
+        )
+      ).rejects.toThrow('Parallel download failed (exit code 1): part failed');
+
+      const downloadCommand = execWithSessionSpy.mock.calls[1][0];
+      expect(downloadCommand).toMatch(/^\( .*exit 1; fi \)$/);
+      expect(execWithSessionSpy.mock.calls[1]).toEqual([
+        downloadCommand,
+        backupSession,
+        { timeout: 1810_000, origin: 'internal' }
+      ]);
+      expect(execWithSessionSpy).toHaveBeenLastCalledWith(
+        "rm -f '/var/backups/test.sqsh.tmp'",
+        backupSession,
+        { origin: 'internal' }
+      );
+    });
+
     it('should reject unsupported backup roots before calling the container', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi.spyOn(

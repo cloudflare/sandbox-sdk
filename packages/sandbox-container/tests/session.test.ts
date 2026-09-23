@@ -169,6 +169,22 @@ describe('Session', () => {
       expect(result.stderr).toBe('');
     });
 
+    it('should preserve parent shell state when a child shell exits', async () => {
+      await session.exec('export BACKUP_SESSION_MARKER=original');
+      const tmpPath = join(testDir, 'parallel-download.tmp');
+      const result = await session.exec(
+        `( touch '${tmpPath}'; (set -o pipefail; false | cat) & J0=$!; wait $J0; E0=$?; FAILED=$(( $E0 )); if [ "$FAILED" -ne 0 ]; then rm -f '${tmpPath}'; exit 1; fi )`
+      );
+
+      expect(result.exitCode).toBe(1);
+
+      const afterFailure = await session.exec(
+        `printf '%s:%s' "$BACKUP_SESSION_MARKER" "$([ ! -e '${tmpPath}' ] && echo clean)"`
+      );
+      expect(afterFailure.exitCode).toBe(0);
+      expect(afterFailure.stdout).toBe('original:clean');
+    });
+
     it('should handle command not found', async () => {
       const result = await session.exec('nonexistentcommand123');
 
