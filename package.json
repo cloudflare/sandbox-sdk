@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "build": "vp pack && npm run shim:build",
-    "check": "vp check && npm run knip && npm run shim:check",
+    "check": "vp pack && vp check && npm run knip && npm run shim:check",
     "example:deploy": "npm run example:workspace:deploy",
     "example:types": "npm run example:workspace:types",
     "example:workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/workspace/wrangler.jsonc",
