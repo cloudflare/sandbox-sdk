@@ -8,6 +8,7 @@ Done when `GET .../diff` shows the change you asked for.
 | ------------------------------------------------------- | ---------------------------- | ----------------------------------------------------- |
 | [Pi](https://github.com/earendil-works/pi)              | [`pi`](pi)                   | its JSON events; it exits `0` when a model call fails |
 | [Claude Code](https://code.claude.com/docs/en/overview) | [`claude-code`](claude-code) | the `is_error` field of its final `result` event      |
+| [Codex](https://developers.openai.com/codex/cli)        | [`codex`](codex)             | its exit code and last message                        |
 
 Each agent directory is a separate Worker with its own image and `wrangler.jsonc`. Deploy only the agent you want. The Worker code they share is in [`shared`](shared): the Durable Object that clones, runs, and tracks tasks, the outbound policy, and the HTTP routes. Each agent's `src/index.ts` supplies its command line and how to read its outcome. To copy an agent out of this repository, copy `shared` with it.
 
