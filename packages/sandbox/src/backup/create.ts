@@ -19,9 +19,9 @@ import {
 } from './constants';
 import type { BackupTransfer } from './transfer';
 import {
-  normalizeBackupExcludes,
   resolveBackupCompression,
-  validateBackupDir
+  validateBackupDir,
+  validateBackupExcludes
 } from './validation';
 
 type BackupCreatorDeps = {
@@ -53,15 +53,12 @@ export class BackupCreator {
     if (options.localBucket) {
       return await this.doCreateBackupLocal(options);
     }
-    this.transfer.requireBackupBucket();
     return await this.doCreateBackup(options);
   }
 
   private async doCreateBackup(
     options: BackupOptions
   ): Promise<DirectoryBackup> {
-    const bucket = this.transfer.requireBackupBucket();
-    this.transfer.requirePresignedURLSupport();
     const {
       dir,
       name,
@@ -80,9 +77,9 @@ export class BackupCreator {
 
     try {
       this.validateOptions({ dir, name, ttl, gitignore, excludes });
-
       const resolvedCompression = resolveBackupCompression(compression);
-      const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
+      const bucket = this.transfer.requireBackupBucket();
+      this.transfer.requirePresignedURLSupport();
       const currentBackupId = crypto.randomUUID();
       backupId = currentBackupId;
       const archivePath = `${BACKUP_CONTAINER_DIR}/${currentBackupId}.sqsh`;
@@ -98,7 +95,7 @@ export class BackupCreator {
               archivePath,
               {
                 gitignore,
-                excludes: normalizedExcludes,
+                excludes,
                 compression: resolvedCompression
               }
             );
@@ -241,6 +238,7 @@ export class BackupCreator {
         timestamp: new Date().toISOString()
       });
     }
+    validateBackupExcludes(options.excludes);
   }
 
   /**
@@ -266,24 +264,22 @@ export class BackupCreator {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
 
-    const envObj = this.env as Record<string, unknown>;
-    const bucket = envObj.BACKUP_BUCKET;
-    if (!bucket || !isR2Bucket(bucket)) {
-      throw new InvalidBackupConfigError({
-        message:
-          'BACKUP_BUCKET R2 binding not found in env. ' +
-          'Add a BACKUP_BUCKET R2 binding to your wrangler.jsonc for local backup support.',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'Missing BACKUP_BUCKET R2 binding' },
-        timestamp: new Date().toISOString()
-      });
-    }
-
     try {
       this.validateOptions({ dir, name, ttl, gitignore, excludes });
       const resolvedCompression = resolveBackupCompression(compression);
-      const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
+      const envObj = this.env as Record<string, unknown>;
+      const bucket = envObj.BACKUP_BUCKET;
+      if (!bucket || !isR2Bucket(bucket)) {
+        throw new InvalidBackupConfigError({
+          message:
+            'BACKUP_BUCKET R2 binding not found in env. ' +
+            'Add a BACKUP_BUCKET R2 binding to your wrangler.jsonc for local backup support.',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'Missing BACKUP_BUCKET R2 binding' },
+          timestamp: new Date().toISOString()
+        });
+      }
 
       const currentBackupId = crypto.randomUUID();
       backupId = currentBackupId;
@@ -300,7 +296,7 @@ export class BackupCreator {
               archivePath,
               {
                 gitignore,
-                excludes: normalizedExcludes,
+                excludes,
                 compression: resolvedCompression
               }
             );
