@@ -2666,7 +2666,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   ): Promise<ProcessRPCDescriptor> {
     const argv = validateExecArgv(command);
     const startTime = Date.now();
-    const commandText = argv.join(' ');
+    const commandSummary = { argv0: argv[0], argCount: argv.length - 1 };
     const canMergeEnvironment =
       options.env === undefined || isPlainObject(options.env);
     const launchOptions =
@@ -2692,7 +2692,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: 'success',
-        command: commandText,
+        ...commandSummary,
         processId: descriptor.id,
         pid: descriptor.pid,
         durationMs: Date.now() - startTime,
@@ -2705,7 +2705,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: 'error',
-        command: commandText,
+        ...commandSummary,
         durationMs: Date.now() - startTime,
         origin: 'user',
         error: execError,

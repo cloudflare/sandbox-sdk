@@ -71,8 +71,10 @@ describe('Shell', () => {
     });
     expect(shell.results).toHaveLength(1);
     expect(loggerSpies.info).toHaveBeenCalledWith(
-      'Command completed successfully',
-      { command: 'echo hello' }
+      'Command completed successfully'
+    );
+    expect(JSON.stringify(loggerSpies.info.mock.calls)).not.toContain(
+      'echo hello'
     );
   });
 
@@ -101,7 +103,7 @@ describe('Shell', () => {
     expect(shell.results[0].exitCode).toBe(143);
     expect(loggerSpies.warn).toHaveBeenCalledWith(
       'Command failed with exit code 143',
-      expect.objectContaining({ command: 'sleep 10' })
+      expect.not.objectContaining({ command: expect.anything() })
     );
   });
 
@@ -127,10 +129,7 @@ describe('Shell', () => {
     expect(loggerSpies.error).toHaveBeenCalledWith(
       'Command timed out',
       undefined,
-      expect.objectContaining({
-        command: 'sleep 1',
-        timeout: 25
-      })
+      { timeout: 25 }
     );
   });
 });

@@ -106,7 +106,6 @@ export class Shell implements OpenAIShell {
         outcome = { type: 'exit', exitCode };
 
         this.logger.debug('Command executed successfully', {
-          command,
           exitCode,
           stdoutLength: stdout.length,
           stderrLength: stderr.length
@@ -115,16 +114,14 @@ export class Shell implements OpenAIShell {
         // Log warnings for non-zero exit codes or stderr output
         if (exitCode !== 0) {
           this.logger.warn(`Command failed with exit code ${exitCode}`, {
-            command,
-            stderr
+            stderrLength: stderr.length
           });
         } else if (stderr) {
           this.logger.warn(`Command produced stderr output`, {
-            command,
-            stderr
+            stderrLength: stderr.length
           });
         } else {
-          this.logger.info(`Command completed successfully`, { command });
+          this.logger.info(`Command completed successfully`);
         }
       } catch (error: unknown) {
         // Handle network/HTTP errors or timeout errors
@@ -142,14 +139,11 @@ export class Shell implements OpenAIShell {
           errorMessage.includes('timed out')
         ) {
           this.logger.error(`Command timed out`, undefined, {
-            command,
             timeout: action.timeoutMs
           });
           outcome = { type: 'timeout' };
         } else {
           this.logger.error(`Error executing command`, toError(error), {
-            command,
-            error: errorMessage || error,
             exitCode
           });
           outcome = { type: 'exit', exitCode: exitCode ?? 1 };
@@ -174,7 +168,6 @@ export class Shell implements OpenAIShell {
         timestamp
       });
       this.logger.debug('Result collected', {
-        command,
         exitCode: collectedExitCode,
         timestamp
       });
