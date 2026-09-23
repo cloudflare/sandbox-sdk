@@ -85,7 +85,7 @@ export class ProcessService {
       return {
         success: false,
         error: {
-          message: `Failed to execute command '${command}': ${errorMessage}`,
+          message: `Failed to execute command: ${errorMessage}`,
           code: ErrorCode.COMMAND_EXECUTION_ERROR,
           details: {
             command,
@@ -161,7 +161,6 @@ export class ProcessService {
             logCanonicalEvent(this.logger, {
               event: 'process.start',
               outcome: 'success',
-              command: command,
               pid: event.pid,
               durationMs: Date.now() - startTime,
               processId: storedRecord.id,
@@ -190,7 +189,6 @@ export class ProcessService {
             logCanonicalEvent(this.logger, {
               event: 'process.exit',
               outcome: 'success',
-              command: command,
               pid: storedRecord.pid,
               exitCode: exitCode,
               durationMs:
@@ -232,7 +230,6 @@ export class ProcessService {
             logCanonicalEvent(this.logger, {
               event: 'process.error',
               outcome: 'error',
-              command,
               processId: storedRecord.id,
               sessionId: executionSessionId,
               durationMs: Date.now() - startTime,
@@ -282,7 +279,7 @@ export class ProcessService {
       return {
         success: false,
         error: {
-          message: `Failed to start streaming command '${command}': ${errorMessage}`,
+          message: `Failed to start streaming command: ${errorMessage}`,
           code: ErrorCode.STREAM_START_ERROR,
           details: {
             command,

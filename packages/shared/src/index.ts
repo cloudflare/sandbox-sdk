@@ -45,8 +45,7 @@ export {
 export {
   redactCommand,
   redactCredentials,
-  redactSensitiveParams,
-  truncateForLog
+  redactSensitiveParams
 } from './logger/sanitize.js';
 // Export PTY types
 export type {

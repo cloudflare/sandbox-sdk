@@ -520,7 +520,7 @@ export class SessionManager {
         return {
           success: false,
           error: {
-            message: `Failed to execute command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to execute command in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             details: {
               command,
@@ -779,7 +779,7 @@ export class SessionManager {
         return {
           success: false,
           error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to execute streaming command in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.STREAM_START_ERROR,
             details: {
               command,
@@ -906,7 +906,7 @@ export class SessionManager {
         return {
           success: false as const,
           error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to execute streaming command in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.STREAM_START_ERROR,
             details: {
               command,

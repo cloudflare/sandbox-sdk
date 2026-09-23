@@ -1,4 +1,5 @@
 import { Container } from '@cloudflare/containers';
+import type { Logger } from '@repo/shared';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
@@ -1327,6 +1328,43 @@ describe('Sandbox - Automatic Session Management', () => {
         env: { NODE_ENV: 'production', DEBUG: 'true' },
         cwd: '/workspace'
       });
+    });
+
+    it('logs exec events without command text', async () => {
+      const { logger } = sandbox as unknown as { logger: Logger };
+      const infoSpy = vi.spyOn(logger, 'info');
+      const errorSpy = vi.spyOn(logger, 'error');
+      const command =
+        'curl -H "Authorization: Bearer tok-secret" https://example.com';
+      vi.mocked(sandbox.client.commands.execute)
+        .mockResolvedValueOnce({
+          success: true,
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          command,
+          timestamp: new Date().toISOString()
+        } as any)
+        .mockRejectedValueOnce(new Error('execution failed'));
+
+      await sandbox.exec(command);
+      await expect(sandbox.exec(command)).rejects.toThrow('execution failed');
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^sandbox\.exec success \(\d+ms\)$/),
+        expect.objectContaining({ event: 'sandbox.exec', exitCode: 0 })
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('sandbox.exec error'),
+        expect.any(Error),
+        expect.objectContaining({ event: 'sandbox.exec', outcome: 'error' })
+      );
+      const logged = JSON.stringify([
+        ...infoSpy.mock.calls,
+        ...errorSpy.mock.calls
+      ]);
+      expect(logged).not.toContain('tok-secret');
+      expect(logged).not.toContain('Authorization');
     });
   });
 
