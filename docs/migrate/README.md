@@ -19,5 +19,6 @@ Start with the first page. Then do the pages for the features you use.
 2. [Change commands and file calls](commands-and-files.md): `exec()`, sessions, timeouts, files, watching
 3. [Move background processes](background-processes.md): `startProcess()`, status, logs, waits, kills, callbacks
 4. [Move browser terminals](terminals.md): `terminal()`, terminal sessions, reconnect, replay, `SandboxAddon`
+5. [Move outbound rules](outbound-network.md): outbound handlers, allowed and denied hosts, runtime changes
 
 For every 0.12 API and what replaces it, see the [API map](api-map.md).
