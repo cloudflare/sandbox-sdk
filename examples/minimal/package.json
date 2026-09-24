@@ -1,0 +1,19 @@
+{
+  "name": "sandbox-minimal",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^1.0.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260914.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.137.0"
+  }
+}

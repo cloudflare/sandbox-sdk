@@ -25,6 +25,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 
 ## Examples
 
+- [Minimal sandbox](examples/minimal): start a project from a working Worker, Durable Object, and Container
 - [Code workspace](examples/workspace): write a script and run it
 - [Artifact workspace](examples/artifact-workspace): process files in a job-scoped S3 prefix
 - [Backup workspace](examples/backup-workspace): back up a directory to R2 and restore it
