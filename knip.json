@@ -7,7 +7,7 @@
         "examples/*/src/index.ts",
         "examples/coding-agents/*/src/index.ts"
       ],
-      "ignore": ["examples/*/app/**", "tools/oxlint/anti-slop/**"],
+      "ignore": ["examples/*/app/**", "openai/**", "tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["cloudflare"]
     },
     "packages/sandbox": {

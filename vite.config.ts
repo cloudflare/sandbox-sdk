@@ -16,15 +16,18 @@ const agentToolingIgnorePatterns = [
   "tools/oxlint/anti-slop/**",
 ];
 
+// The OpenAI Agents API template has its own dependencies, tests, and CI job.
+const standaloneTemplatePatterns = ["openai/**"];
+
 export default defineConfig({
   defaultPackage: {
     pack: "./packages/sandbox",
   },
   fmt: {
-    ignorePatterns: agentToolingIgnorePatterns,
+    ignorePatterns: [...agentToolingIgnorePatterns, ...standaloneTemplatePatterns],
   },
   lint: {
-    ignorePatterns: agentToolingIgnorePatterns,
+    ignorePatterns: [...agentToolingIgnorePatterns, ...standaloneTemplatePatterns],
     jsPlugins: [
       {
         name: "anti-slop",
@@ -69,5 +72,6 @@ export default defineConfig({
         new URL("./packages/sandbox/tests/cloudflare-workers.ts", import.meta.url),
       ),
     },
+    exclude: ["**/node_modules/**", "**/.git/**", ...standaloneTemplatePatterns],
   },
 });

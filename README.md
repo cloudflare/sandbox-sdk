@@ -37,6 +37,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Terminal workspace](examples/terminal-workspace): open a live shell in the browser that survives reconnects
 - [Coding agents](examples/coding-agents): run a coding agent on a GitHub repository
 - [Devin Outposts](devin): run each Devin session in its own Container and snapshot it on suspend
+- [OpenAI Agents API](openai/agents-api): run each OpenAI Agents API session's Codex executor in its own Container
 
 ## In this repository
 

@@ -1,0 +1,32 @@
+/**
+ * OpenAI Agents API executor on Cloudflare.
+ *
+ * One Durable Object per OpenAI session owns one isolated Container running
+ * the Codex executor. A required OpenAI webhook updates each executor from
+ * authoritative session state.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openai-agents-api-executor",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "vars": {
+    "EXECUTOR_KEEP_ALIVE_SECONDS": "30",
+    "EXECUTOR_PREWARM_ENABLED": "true",
+    "EXECUTOR_SNAPSHOTS_ENABLED": "false"
+  },
+  "containers": [
+    {
+      "class_name": "ExecutorEnvironment",
+      "image": "./Dockerfile",
+      "instance_type": "standard-4",
+      "max_instances": 5
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "ExecutorEnvironment", "name": "EXECUTORS" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ExecutorEnvironment"] }]
+}
