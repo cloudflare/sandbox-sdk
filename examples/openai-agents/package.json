@@ -14,7 +14,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.12.10",
     "@openai/agents": "^0.3.3",
     "nanoid": "^5.1.16",
     "react": "^19.2.8",

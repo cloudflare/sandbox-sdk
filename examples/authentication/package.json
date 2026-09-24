@@ -15,7 +15,7 @@
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.12.10",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "wrangler": "^4.102.0"

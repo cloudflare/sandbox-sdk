@@ -10,7 +10,7 @@
     "start": "vite"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.12.10",
     "@vitejs/plugin-react": "^5.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

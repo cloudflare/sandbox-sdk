@@ -13,7 +13,7 @@
     "test": "./scripts/test"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.12.10",
     "@types/node": "^24.10.1",
     "aws4fetch": "^1.0.20",
     "hono": "^4.13.7",
