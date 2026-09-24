@@ -10,7 +10,6 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 | Package | Use `Files` or `S3Mounts` from `@cloudflare/sandbox`.    |
 | Pattern | Write it yourself. The linked page or example shows how. |
 | Product | Use another Cloudflare product.                          |
-| None    | No replacement yet.                                      |
 | Removed | Not needed. The note says what to do instead.            |
 
 ## Class, identity, and lifetime
@@ -24,7 +23,7 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 | `keepAlive`, `setKeepAlive()`                                                    | Pattern | Alarm that sends the Container a request while work remains   | [Run background processes](../run-background-processes.md#7-keep-the-container-awake-and-react-to-exits). |
 | `renewActivityTimeout()`                                                         | Native  | Any request to the Durable Object                             | The timeout counts from when the Durable Object becomes inactive.                                         |
 | `containerTimeouts`, `setContainerTimeouts()`                                    | Removed | `AbortSignal`                                                 |                                                                                                           |
-| `transport`, `setTransport()`, `SANDBOX_TRANSPORT`                               | Removed | —                                                             |                                                                                                           |
+| `transport`, `setTransport()`, `SANDBOX_TRANSPORT`                               | Removed | Not needed                                                    | `container.exec()` and `Files` reach the Container directly. Remove the setting.                          |
 | `labels`, `setLabels()`                                                          | Native  | `container.start({ labels })`                                 |                                                                                                           |
 | `configure()`                                                                    | Removed | Options on each call                                          |                                                                                                           |
 | `setEnvVars()`, class `envVars`                                                  | Native  | `container.start({ env })` or `container.exec(argv, { env })` | `exec()` does not inherit `start()` variables.                                                            |
@@ -48,7 +47,7 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 | `timeout`, `signal`                                  | Native  | `signal` from a timer you clear              | The process exits with code 137. [Commands and files](commands-and-files.md).                       |
 | `cwd`, `env`                                         | Native  | The same options                             |                                                                                                     |
 | `encoding`                                           | Removed | Decode bytes yourself                        |                                                                                                     |
-| `isExecResult()`, `isProcess()`, `isProcessStatus()` | Removed | —                                            |                                                                                                     |
+| `isExecResult()`, `isProcess()`, `isProcessStatus()` | Removed | Not needed                                   | `exec()` returns an `ExecProcess`. TypeScript types replace the guards.                             |
 
 ## Processes
 
@@ -79,21 +78,21 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 
 ## Files
 
-| 0.12                                                                          | Kind    | Replacement                                 | Notes                                                               |
-| ----------------------------------------------------------------------------- | ------- | ------------------------------------------- | ------------------------------------------------------------------- |
-| `readFile()`, `readFileStream()`                                              | Package | `files.readFile()`                          | Returns a `Response`. Use `.text()`, `.arrayBuffer()`, or the body. |
-| `writeFile()`                                                                 | Package | `files.writeFile()`                         | Pass a string, bytes, a `Blob`, or a stream. No base64.             |
-| `mkdir()`                                                                     | Package | `files.mkdir()`                             |                                                                     |
-| `deleteFile()`                                                                | Package | `files.remove()`                            | Also removes directories with `recursive: true`.                    |
-| `renameFile()`, `moveFile()`                                                  | Package | `files.rename()`                            | Fails with `EXDEV` across filesystems.                              |
-| `listFiles()`                                                                 | Package | `files.readDirectory()`                     | One level. Includes hidden entries.                                 |
-| `listFiles({ recursive: true })`                                              | Pattern | Walk `readDirectory()`                      | [Commands and files](commands-and-files.md).                        |
-| `exists()`                                                                    | Package | `files.stat()`                              | Catch `SandboxFileError` with `ENOENT`.                             |
-| File metadata                                                                 | Package | `files.stat()`, `files.lstat()`             |                                                                     |
-| `watch()`, `checkChanges()`                                                   | Pattern | `inotifywait -m` through `container.exec()` | [Commands and files](commands-and-files.md).                        |
-| `collectFile()`, `streamFile()`                                               | Removed | The `Response` body                         |                                                                     |
-| `parseSSEStream()`, `responseToAsyncIterable()`, `asyncIterableToSSEStream()` | Removed | —                                           |                                                                     |
-| `WriteFileResult`, `ReadFileResult`, and other result types                   | Removed | `void`, `Response`, or `SandboxFileStat`    | Failures throw `SandboxFileError`.                                  |
+| 0.12                                                                          | Kind    | Replacement                                 | Notes                                                                                                                                       |
+| ----------------------------------------------------------------------------- | ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readFile()`, `readFileStream()`                                              | Package | `files.readFile()`                          | Returns a `Response`. Use `.text()`, `.arrayBuffer()`, or the body.                                                                         |
+| `writeFile()`                                                                 | Package | `files.writeFile()`                         | Pass a string, bytes, a `Blob`, or a stream. No base64.                                                                                     |
+| `mkdir()`                                                                     | Package | `files.mkdir()`                             |                                                                                                                                             |
+| `deleteFile()`                                                                | Package | `files.remove()`                            | Also removes directories with `recursive: true`.                                                                                            |
+| `renameFile()`, `moveFile()`                                                  | Package | `files.rename()`                            | Fails with `EXDEV` across filesystems.                                                                                                      |
+| `listFiles()`                                                                 | Package | `files.readDirectory()`                     | One level. Includes hidden entries.                                                                                                         |
+| `listFiles({ recursive: true })`                                              | Pattern | Walk `readDirectory()`                      | [Commands and files](commands-and-files.md).                                                                                                |
+| `exists()`                                                                    | Package | `files.stat()`                              | Catch `SandboxFileError` with `ENOENT`.                                                                                                     |
+| File metadata                                                                 | Package | `files.stat()`, `files.lstat()`             |                                                                                                                                             |
+| `watch()`, `checkChanges()`                                                   | Pattern | `inotifywait -m` through `container.exec()` | [Commands and files](commands-and-files.md).                                                                                                |
+| `collectFile()`, `streamFile()`                                               | Removed | The `Response` body                         |                                                                                                                                             |
+| `parseSSEStream()`, `responseToAsyncIterable()`, `asyncIterableToSSEStream()` | Removed | The `ReadableStream`s on `ExecProcess`      | To send output to a browser as server-sent events, see [Run background processes](../run-background-processes.md#4-read-and-follow-output). |
+| `WriteFileResult`, `ReadFileResult`, and other result types                   | Removed | `void`, `Response`, or `SandboxFileStat`    | Failures throw `SandboxFileError`.                                                                                                          |
 
 ## Ports, preview URLs, and tunnels
 
@@ -158,8 +157,8 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 | ---------------------------------------------------------------- | ------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `runCode()`, `runCodeStream()`, code contexts, `CodeInterpreter` | Product | [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) | For one script, `container.exec(["python3", …])`.                                                                                                                      |
 | `@cloudflare/sandbox/opencode`                                   | Pattern | Run `opencode` with `container.exec()`                                | [OpenCode example](../../examples/coding-agents/opencode). For the server, start `opencode serve` like the dev server in [Preview a web app](../preview-a-web-app.md). |
-| `@cloudflare/sandbox/openai`                                     | Removed | —                                                                     |                                                                                                                                                                        |
-| `@cloudflare/sandbox/bridge`, `WarmPool`                         | Removed | —                                                                     |                                                                                                                                                                        |
+| `@cloudflare/sandbox/openai`                                     | Removed | Your own `Shell` and `Editor`                                         | Implement the OpenAI Agents SDK interfaces with `container.exec()` and `Files`.                                                                                        |
+| `@cloudflare/sandbox/bridge`, `WarmPool`                         | Removed | Your own Worker routes                                                | Each example exposes its own HTTP API. For a warm pool, start sandboxes under spare names ahead of time, and hand one name to each new session.                        |
 
 ## Images
 
@@ -169,10 +168,10 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 
 ## Errors and clients
 
-| 0.12                                                                                                    | Kind    | Replacement                    | Notes                                         |
-| ------------------------------------------------------------------------------------------------------- | ------- | ------------------------------ | --------------------------------------------- |
-| `ContainerUnavailableError`, `OperationInterruptedError`, `RPCTransportError`, `SessionTerminatedError` | Removed | Native errors from `container` | Not wrapped.                                  |
-| `ProcessExitedBeforeReadyError`, `ProcessReadyTimeoutError`                                             | Pattern | Your readiness loop's results  | [Preview a web app](../preview-a-web-app.md). |
-| `isPlatformTransientError()`, `isDurableObjectCodeUpdateReset()`                                        | Removed | —                              | The package does not retry.                   |
-| `SandboxClient` and the other clients                                                                   | Removed | —                              |                                               |
-| `SANDBOX_LOG_LEVEL`, `SANDBOX_LOG_FORMAT`                                                               | Removed | —                              |                                               |
+| 0.12                                                                                                    | Kind    | Replacement                              | Notes                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ContainerUnavailableError`, `OperationInterruptedError`, `RPCTransportError`, `SessionTerminatedError` | Removed | Native errors from `container`           | Not wrapped.                                                                                                                                                                                                                                        |
+| `ProcessExitedBeforeReadyError`, `ProcessReadyTimeoutError`                                             | Pattern | Your readiness loop's results            | [Preview a web app](../preview-a-web-app.md).                                                                                                                                                                                                       |
+| `isPlatformTransientError()`, `isDurableObjectCodeUpdateReset()`                                        | Removed | `error.retryable` and `error.overloaded` | Retry idempotent calls with a new stub when `retryable` is true, and never when `overloaded` is. The package does not retry. See [Durable Object error handling](https://developers.cloudflare.com/durable-objects/best-practices/error-handling/). |
+| `SandboxClient` and the other clients                                                                   | Removed | `container` and `Files`                  | Call them from your Durable Object.                                                                                                                                                                                                                 |
+| `SANDBOX_LOG_LEVEL`, `SANDBOX_LOG_FORMAT`                                                               | Removed | Your own logs                            | The package does not log. Log from your Worker and read it in Workers Logs.                                                                                                                                                                         |
