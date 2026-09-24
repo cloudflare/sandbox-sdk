@@ -1,12 +1,18 @@
 FROM alpine:3.23 AS toolchain
 
-RUN apk add --no-cache binutils build-base cargo rust rust-clippy rustfmt
+# Steps that download take an optional extra_ca secret for networks that inspect TLS.
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
+    apk add --no-cache binutils build-base cargo rust rust-clippy rustfmt
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/sandbox-tools/Cargo.toml crates/sandbox-tools/Cargo.toml
 COPY crates/sandbox-tools/src crates/sandbox-tools/src
 COPY crates/sandbox-tools/tests crates/sandbox-tools/tests
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then export CARGO_HTTP_CAINFO=/run/secrets/extra_ca; fi; \
+    cargo fetch --locked
 
 FROM toolchain AS check
 RUN cargo fmt --all --check
@@ -18,11 +24,15 @@ FROM toolchain AS build
 RUN cargo rustc --release --locked --package sandbox-tools --bin sandbox-shim -- -C target-feature=+crt-static
 
 FROM alpine:3.23 AS contract
-RUN apk add --no-cache nodejs npm
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
+    apk add --no-cache nodejs npm
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.json vite.config.ts ./
 COPY packages/sandbox/package.json packages/sandbox/package.json
-RUN npm ci
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
+    npm ci
 COPY packages/sandbox packages/sandbox
 COPY --from=build /src/target/release/sandbox-shim /usr/local/bin/sandbox-shim
 ENV SANDBOX_SHIM_PATH=/usr/local/bin/sandbox-shim

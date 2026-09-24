@@ -23,6 +23,8 @@ const minioImage =
   "minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
 const socatImage =
   "alpine/socat@sha256:c5a091e1e735a90aa941a5828529dbe6c6157407a8047a9aa473faa133361b82";
+const extraCa = process.env.SANDBOX_EXTRA_CA;
+const extraCaSecret = extraCa ? ["--secret", `id=extra_ca,src=${extraCa}`] : [];
 
 interface RouteFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
@@ -55,6 +57,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
       "build",
       "--platform",
       "linux/amd64",
+      ...extraCaSecret,
       "--target",
       "image",
       "--tag",
