@@ -48,9 +48,8 @@ For local development:
 
 ```bash
 git clone https://github.com/cloudflare/sandbox-sdk.git
-cd sandbox-sdk
+cd sandbox-sdk/openai/agents-api
 npm install
-cd openai/agents-api
 cp .dev.vars.example .dev.vars
 npm run dev
 ```

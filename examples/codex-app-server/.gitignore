@@ -1,2 +1,0 @@
-# Keep .dev.vars.example tracked (root .gitignore covers .dev.vars)
-!.dev.vars.example

@@ -1,15 +1,12 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "lib": ["esnext"],
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "types": ["@types/node", "./worker-configuration.d.ts"],
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "strict": true,
+    "noEmit": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "types": ["@cloudflare/workers-types/experimental"]
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

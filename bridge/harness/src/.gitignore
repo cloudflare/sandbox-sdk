@@ -1,5 +1,0 @@
-.env
-session_state.json
-snapshots/
-__pycache__/
-.venv/

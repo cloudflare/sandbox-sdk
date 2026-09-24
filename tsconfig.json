@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": {
+      "@cloudflare/sandbox": ["./packages/sandbox/src/index.ts"]
+    },
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types/experimental"]
+  },
+  "include": ["examples/**/*.ts", "packages/**/*.ts", "vite.config.ts"]
+}

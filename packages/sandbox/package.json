@@ -1,95 +1,24 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.12.10",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/cloudflare/sandbox-sdk"
-  },
-  "description": "A sandboxed environment for running commands",
-  "type": "module",
-  "dependencies": {
-    "@cloudflare/containers": "^0.3.5",
-    "aws4fetch": "^1.0.20",
-    "capnweb": "^0.8.0",
-    "hono": "^4.13.7"
-  },
-  "devDependencies": {
-    "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.1.40",
-    "@repo/shared": "*",
-    "@xterm/xterm": "^6.0.0",
-    "wrangler": "^4.102.0"
-  },
-  "peerDependencies": {
-    "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.1.40",
-    "@xterm/xterm": ">=5.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@openai/agents": {
-      "optional": true
-    },
-    "@opencode-ai/sdk": {
-      "optional": true
-    },
-    "@xterm/xterm": {
-      "optional": true
-    }
-  },
-  "tags": [
-    "sandbox",
-    "codegen",
-    "containers",
-    "cloudflare",
-    "durable objects"
-  ],
-  "scripts": {
-    "build": "rm -rf dist && tsdown --config tsdown.config.ts",
-    "check": "biome check && npm run typecheck",
-    "fix": "biome check --fix && npm run typecheck",
-    "typecheck": "tsc --noEmit",
-    "docker:local": "scripts/docker-local.sh",
-    "test": "vitest run --config vitest.config.ts \"$@\"",
-    "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
-    "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
-    "test:e2e:browser": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && npx playwright install chromium && playwright test --config tests/e2e/browser/playwright.config.ts",
-    "test:perf": "cd ../.. && vitest run --config vitest.perf.config.ts \"$@\""
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
-    },
-    "./openai": {
-      "types": "./dist/openai/index.d.ts",
-      "import": "./dist/openai/index.js",
-      "require": "./dist/openai/index.js"
-    },
-    "./opencode": {
-      "types": "./dist/opencode/index.d.ts",
-      "import": "./dist/opencode/index.js",
-      "require": "./dist/opencode/index.js"
-    },
-    "./xterm": {
-      "types": "./dist/xterm/index.d.ts",
-      "import": "./dist/xterm/index.js",
-      "require": "./dist/xterm/index.js"
-    },
-    "./bridge": {
-      "types": "./dist/bridge/index.d.ts",
-      "import": "./dist/bridge/index.js",
-      "require": "./dist/bridge/index.js"
-    }
-  },
-  "keywords": [],
-  "author": "",
+  "version": "1.0.0-next.0",
+  "description": "Structured workspace file operations for Cloudflare sandboxes",
   "license": "Apache-2.0",
   "files": [
-    "dist",
-    "Dockerfile",
-    "startup.sh",
-    "README.md",
-    "LICENSE"
-  ]
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "aws4fetch": "1.0.20",
+    "zod": "4.5.4"
+  }
 }

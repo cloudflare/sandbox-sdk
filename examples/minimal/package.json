@@ -1,22 +1,19 @@
 {
-  "name": "@cloudflare/sandbox-minimal-example",
-  "version": "1.0.0",
-  "type": "module",
+  "name": "sandbox-minimal",
+  "version": "0.0.0",
   "private": true,
-  "description": "A minimal example of using the Sandbox SDK",
+  "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit"
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^1.0.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
-    "@types/node": "^24.10.1",
-    "typescript": "^5.9.3",
-    "wrangler": "^4.102.0"
-  },
-  "author": "",
-  "license": "MIT"
+    "@cloudflare/workers-types": "^5.20260914.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.137.0"
+  }
 }

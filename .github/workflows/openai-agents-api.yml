@@ -3,8 +3,8 @@ name: OpenAI Agents API
 on:
   pull_request:
     paths:
-      - 'openai/**'
-      - '.github/workflows/openai-agents-api.yml'
+      - "openai/**"
+      - ".github/workflows/openai-agents-api.yml"
   workflow_dispatch:
 
 permissions:
@@ -17,29 +17,26 @@ concurrency:
 jobs:
   tests:
     name: openai/agents-api tests
-    runs-on: ubuntu-24.04-4core
+    runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: openai/agents-api
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
           persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'npm'
+          cache: npm
+          cache-dependency-path: openai/agents-api/package-lock.json
 
-      - uses: actions/cache/restore@v5
-        id: nm-cache
-        with:
-          path: |
-            node_modules
-            openai/*/node_modules
-          key: node-modules-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --no-audit --no-fund
 
-      - run: npm ci --prefer-offline --no-audit --no-fund
-        if: steps.nm-cache.outputs.cache-hit != 'true'
+      - name: Type check
+        run: npm run typecheck
 
-      - name: Executor tests
-        run: npm test -w cloudflare-openai-agents-api-executor
+      - name: Test
+        run: npm test

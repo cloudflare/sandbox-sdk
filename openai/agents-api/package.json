@@ -52,12 +52,17 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.17",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.5",
     "vitest": "^4.1.11",
-    "wrangler": "^4.102.0"
+    "wrangler": "^4.137.0"
+  },
+  "overrides": {
+    "@cloudflare/vitest-pool-workers": {
+      "wrangler": "$wrangler"
+    }
   },
   "license": "Apache-2.0"
 }

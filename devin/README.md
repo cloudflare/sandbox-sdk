@@ -1,124 +1,77 @@
 # Devin Outposts on Cloudflare
 
-Run [Devin Outposts](https://docs.devin.ai/cloud/outposts/overview) on Cloudflare, with one isolated [Durable Object Container](https://developers.cloudflare.com/durable-objects/api/container/) per Devin session. Suspended sessions save their workspace to R2 and restore it when they resume.
+Run each [Devin Outposts](https://docs.devin.ai/cloud/outposts/overview) session in its own Container. A Worker polls Devin for the outpost's sessions and gives each session a Durable Object, which starts that session's Container, snapshots it when Devin suspends the session, and restores it when the session resumes.
 
-This template uses Cloudflare Workers, Durable Objects, and Containers directly. It lives in this repository as a deployable container example and does not require the Sandbox SDK package at runtime.
+Done when `curl https://<your-worker>.workers.dev/` returns `{"service":"devin-outpost","status":"ok"}` and a new Devin session on your outpost starts working.
 
 ## Deploy
 
-You need a Cloudflare account, a Devin Outpost ID, and a Devin service-user token with the **Run outpost workers** permission.
-
-### Deploy with one click
+You need a Devin outpost ID and a Devin service user token with the **Run outpost workers** permission.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/devin)
 
-The recommended one-click flow prompts for `DEVIN_OUTPOST_ID` and `DEVIN_API_TOKEN`, then provisions the Worker, cron trigger, Durable Object namespace, container application, and R2 checkpoint bucket.
+The Deploy flow asks for `DEVIN_OUTPOST_ID` and `DEVIN_API_TOKEN`, then creates the Worker, its cron trigger, the Durable Object namespace, and the Container image.
 
-After deployment, verify the Worker using the URL shown by Cloudflare:
+To deploy from your machine instead, you need Node.js 24 and a running Docker daemon:
 
-```bash
-curl https://<your-worker>.workers.dev/
-# {"service":"devin-outpost","status":"ok"}
+```sh
+npm create cloudflare@latest -- devin-outpost --template=cloudflare/sandbox-sdk/devin
+cd devin-outpost
 ```
 
-### Deploy manually
+Set `DEVIN_OUTPOST_ID` in `wrangler.jsonc`, then add the token and deploy:
 
-Manual deployment additionally requires Node.js 24 and a running Docker daemon.
-
-```bash
-git clone https://github.com/cloudflare/sandbox-sdk.git
-cd sandbox-sdk
-npm install
-cd devin
-npx wrangler login
-npx wrangler r2 bucket create devin-outpost-state
-```
-
-Set the Outpost ID in `wrangler.jsonc`:
-
-```jsonc
-"DEVIN_OUTPOST_ID": "your-outpost-id"
-```
-
-The default `DEVIN_API_URL` is `https://api.devin.ai/opbeta`. Change the complete API prefix only when using another Devin environment. The container derives the API origin required by the Devin CLI from this URL.
-
-Add the token and deploy:
-
-```bash
+```sh
 npx wrangler secret put DEVIN_API_TOKEN
 npm run deploy
 ```
 
-If you use another R2 bucket name, update `bucket_name` in `wrangler.jsonc` before deploying.
+## How it works
 
-## Architecture
+A cron trigger runs the Worker every minute. Each run polls the Devin API every `DEVIN_RECONCILE_INTERVAL_MS` (10 seconds by default) and stops before the next run starts. Each poll lists the configured outpost's sessions and skips any session whose `metadata.outpost_id` does not match.
 
-```mermaid
-flowchart LR
-    Devin[Devin Outposts API]
-    Worker[Worker<br/>cron reconciler]
-    DO[Durable Object<br/>per session]
-    Container[Container<br/>devin worker start]
-    R2[(R2 checkpoints)]
+The Worker maps each session status to a call on that session's Durable Object:
 
-    Worker -->|poll| Devin
-    Worker -->|reconcile| DO
-    DO --> Container
-    Container -->|claim and run| Devin
-    Container -->|private checkpoint stream| Worker
-    Worker --> R2
-```
+| Devin status         | Durable Object action                                                                |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `pending`, `running` | Start the Container if it is not running, from the session's snapshot if one exists. |
+| `suspended`          | Wait for the Devin CLI to exit, snapshot the Container, then destroy it.             |
+| `terminated`         | Destroy the Container and forget the snapshot.                                       |
+| Anything else        | Log the status and do nothing.                                                       |
 
-A cron trigger fires the reconciler once per minute. Within each invocation the Worker keeps polling on `DEVIN_RECONCILE_INTERVAL_MS` (10s by default), stopping before the next cron tick so schedules never overlap. This provisions new containers without waiting up to a full minute for the next cron. Each poll queries only the configured Outpost and verifies each response's `metadata.outpost_id` before provisioning anything. It maps Devin's documented statuses to explicit commands for a Durable Object derived from the session ID.
+Inside the Container, `devin worker start` claims the session and runs it. The Durable Object never calls Devin.
 
-| Devin status         | Action                                           |
-| -------------------- | ------------------------------------------------ |
-| `pending`, `running` | Ensure the session container is running.         |
-| `suspended`          | Allow Devin to exit and save a checkpoint.       |
-| `terminated`         | Destroy the container and delete its checkpoint. |
-| Unknown or missing   | Log and ignore.                                  |
+## Snapshots
 
-The Worker owns Devin API polling. Each Durable Object controls one container and does not call Devin. Inside the container, `devin worker start --outpost=... --session=...` owns claiming and the session runtime.
+When Devin suspends a session, the Devin CLI exits. The entrypoint then writes an exit marker and keeps the Container running, because `snapshotContainer()` needs a running Container. On its next poll, the Durable Object finds the marker, saves a snapshot of the Container's root filesystem, stores the snapshot ID, and destroys the Container. When the session resumes, the Container starts from that snapshot and the entrypoint runs `devin worker start` again.
 
-## Suspend and resume
+If the Devin CLI exits while the session is still `running`, the Durable Object snapshots the Container and starts a new one from the snapshot.
 
-After an un-signaled Devin exit, the container archives:
+A snapshot keeps files, installed packages, and Devin's state on disk. It does not keep running processes or memory. If a Container stops before its snapshot is saved, the session resumes from its previous snapshot or from the image.
 
-- `/root`
-- `/workspace`
-- `/opt/devin-persistent`
-
-The archive is compressed with zstd and uploaded through a private outbound-interception proxy. It is restored before Devin starts again and deleted when the session terminates. Containers receive no R2 credentials, bucket details, or object keys.
-
-This is suspend/resume persistence rather than continuous backup. Abrupt container loss can lose recent work, the compressed archive must fit on temporary disk, and a checkpoint is limited to R2's 5 GiB single-upload limit. An R2 lifecycle expiration is recommended as cleanup protection.
+Terminating a session removes the snapshot ID from the Durable Object. The Worker API has no method to delete the snapshot itself.
 
 ## Configuration
 
-| Setting                       | Description                                                                            |
-| ----------------------------- | -------------------------------------------------------------------------------------- |
-| `DEVIN_OUTPOST_ID`            | Required Devin Outpost ID.                                                             |
-| `DEVIN_API_TOKEN`             | Required Devin service-user token with the **Run outpost workers** permission.         |
-| `DEVIN_API_URL`               | Complete queue API prefix; defaults to `https://api.devin.ai/opbeta`.                  |
-| `WORKER_ID_PREFIX`            | Acceptor ID prefix; defaults to `cf-outpost`.                                          |
-| `DEVIN_RECONCILE_INTERVAL_MS` | Interval between reconcile polls within each cron schedule; defaults to `10000` (10s). |
-| `DEVIN_CHECKPOINTS`           | R2 binding for suspend checkpoints.                                                    |
+| Setting                       | Description                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `DEVIN_OUTPOST_ID`            | Required. The ID of your Devin outpost.                                               |
+| `DEVIN_API_TOKEN`             | Required secret. A service user token with the **Run outpost workers** permission.    |
+| `DEVIN_API_URL`               | The Outposts API prefix. Defaults to `https://api.devin.ai/opbeta`.                   |
+| `WORKER_ID_PREFIX`            | The prefix for the acceptor ID that each Container reports. Defaults to `cf-outpost`. |
+| `DEVIN_RECONCILE_INTERVAL_MS` | The time between polls within each cron run. Defaults to `10000`.                     |
 
-## Operational notes
+## Security
 
-- Containers run as root and receive the Devin token required by the official CLI. Use separate deployments for mutually untrusted tenants.
-- The image includes Git, Chromium, FFmpeg, passwordless `sudo`, TLS certificates, and checkpoint tooling.
-- The public Worker exposes only `GET /` for health checks; checkpoint traffic stays on the private interception route.
-- R2 archives are temporary until native whole-container snapshots are available. There is no FUSE mount, periodic sync, or background persistence process.
+- Each Container receives `DEVIN_API_TOKEN`, because the Devin CLI needs it to claim the session. Code that Devin runs in the Container can read it.
+- Devin runs as root with passwordless `sudo` and Internet access. Use separate deployments for work that must not share a token or an account.
+- The Worker answers only `GET /`, for health checks.
 
 ## Local development
 
-```bash
+```sh
 cp .dev.vars.example .dev.vars
 # Set DEVIN_API_TOKEN in .dev.vars and DEVIN_OUTPOST_ID in wrangler.jsonc.
 npm run dev
-```
-
-```bash
-npm test
-npm run typecheck
+curl "http://localhost:8787/cdn-cgi/local/scheduled"
 ```

@@ -1,0 +1,36 @@
+{
+  "name": "sandbox-outbound-workspace-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "OutboundSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "OutboundSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "OutboundSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}

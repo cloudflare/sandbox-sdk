@@ -231,13 +231,16 @@ export class ExecutorEnvironment extends DurableObject<Env> {
         span.setAttribute('container.snapshot.size', snapshot.size);
       }
       container.start({
+        instance: 'standard-4',
         enableInternet: true,
         env: executorEnv({
           executorAPIKey: this.env.OPENAI_EXECUTOR_API_KEY,
           environmentID: connection.environmentID,
           remoteURL
         }),
-        ...(snapshot ? { containerSnapshot: snapshot } : {})
+        ...(snapshot
+          ? { containerSnapshot: snapshot }
+          : { image: container.images.executor })
       });
       this.#attachContainerMonitor(connection.sessionID);
       await this.ctx.storage.put('environmentID', connection.environmentID);
