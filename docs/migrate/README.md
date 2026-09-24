@@ -21,5 +21,6 @@ Start with the first page. Then do the pages for the features you use.
 4. [Move browser terminals](terminals.md): `terminal()`, terminal sessions, reconnect, replay, `SandboxAddon`
 5. [Move outbound rules](outbound-network.md): outbound handlers, allowed and denied hosts, runtime changes
 6. [Move backups](backups.md): `createBackup()`, `restoreBackup()`, backup options, backups made by 0.12
+7. [Move preview URLs and tunnels](ports-and-tunnels.md): `exposePort()`, `proxyToSandbox()`, `waitForPort()`, quick and named tunnels
 
 For every 0.12 API and what replaces it, see the [API map](api-map.md).

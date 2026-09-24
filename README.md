@@ -15,6 +15,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [S3Mounts API](docs/s3-mounts-api.md)
 - [Checkpoint a workspace](docs/checkpoint-a-workspace.md)
 - [Back up a directory](docs/back-up-a-directory.md)
+- [Share a port](docs/share-a-port.md)
 - [Preview a web app](docs/preview-a-web-app.md)
 - [Run background processes](docs/run-background-processes.md)
 - [Open a terminal in a sandbox](docs/open-a-terminal.md)
@@ -30,6 +31,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Checkpoint a workspace](examples/checkpoint-workspace): save the disk and start from that snapshot
 - [Preview workspace](examples/preview-workspace): run a dev server and open its live preview
 - [Process workspace](examples/process-workspace): start, follow, wait for, and stop background processes
+- [Share workspace](examples/share-workspace): give ports preview URLs with tokens, or open tunnels
 - [Outbound workspace](examples/outbound-workspace): change which hosts a sandbox reaches while it runs
 - [Terminal workspace](examples/terminal-workspace): open a live shell in the browser that survives reconnects
 - [Coding agents](examples/coding-agents): run a coding agent on a GitHub repository

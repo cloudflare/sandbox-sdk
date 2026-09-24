@@ -1,0 +1,47 @@
+{
+  "name": "sandbox-share-workspace-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PREVIEW_DOMAIN": "preview.example.com",
+  },
+  "routes": [
+    {
+      "pattern": "*.preview.example.com/*",
+      "zone_name": "example.com",
+    },
+  ],
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "ShareSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "ShareSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "ShareSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}
