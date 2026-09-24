@@ -77,6 +77,7 @@ function executorFixture(
   const monitorRejectors: Array<(error: Error) => void> = [];
   const container = {
     running: options.running ?? false,
+    images: { executor: 'registry.cloudflare.com/account/executor@sha256:1' },
     start: vi.fn(function (this: { running: boolean }) {
       this.running = true;
     }),
@@ -138,6 +139,7 @@ describe('ExecutorEnvironment connection lifecycle', () => {
     await executor.update('sess_1');
 
     expect(container.start).toHaveBeenCalledWith({
+      instance: 'standard-4',
       enableInternet: true,
       env: {
         CODEX_API_KEY: 'executor-key',
@@ -147,7 +149,8 @@ describe('ExecutorEnvironment connection lifecycle', () => {
         USER: 'root',
         LOGNAME: 'root',
         LANG: 'C.UTF-8'
-      }
+      },
+      image: 'registry.cloudflare.com/account/executor@sha256:1'
     });
     expect(container.setInactivityTimeout).toHaveBeenCalledWith(30_000);
     await expect(storage.get('sessionID')).resolves.toBe('sess_1');
@@ -508,6 +511,9 @@ describe('ExecutorEnvironment snapshots', () => {
         }
       })
     );
+    expect(container.start).toHaveBeenCalledWith(
+      expect.not.objectContaining({ image: expect.anything() })
+    );
     expect(spanAttributes).toContainEqual([
       'container.snapshot.restored',
       true
@@ -531,6 +537,11 @@ describe('ExecutorEnvironment snapshots', () => {
 
     await executor.update('sess_1');
 
+    expect(container.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: 'registry.cloudflare.com/account/executor@sha256:1'
+      })
+    );
     expect(container.start).toHaveBeenCalledWith(
       expect.not.objectContaining({ containerSnapshot: expect.anything() })
     );

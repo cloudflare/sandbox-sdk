@@ -15,14 +15,15 @@
   "vars": {
     "EXECUTOR_KEEP_ALIVE_SECONDS": "30",
     "EXECUTOR_PREWARM_ENABLED": "true",
-    "EXECUTOR_SNAPSHOTS_ENABLED": "false"
+    "EXECUTOR_SNAPSHOTS_ENABLED": "true"
   },
   "containers": [
     {
       "class_name": "ExecutorEnvironment",
-      "image": "./Dockerfile",
-      "instance_type": "standard-4",
-      "max_instances": 5
+      "scheduling_policy": "durable_object",
+      "images": {
+        "executor": { "dockerfile": "./Dockerfile" }
+      }
     }
   ],
   "durable_objects": {
