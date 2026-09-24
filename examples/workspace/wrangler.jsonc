@@ -1,0 +1,38 @@
+{
+  "name": "sandbox-code-workspace-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-02",
+  // Files resolves native Linux errno names through node:os.
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "WorkspaceSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "WorkspaceSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "WorkspaceSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}

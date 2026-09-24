@@ -1,0 +1,8 @@
+{
+  "name": "sandbox-preview-app",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "vite": "8.3.0"
+  }
+}

@@ -1,0 +1,9 @@
+.dev.vars
+basic
+.git
+.github
+.wrangler
+.turbo
+dist
+node_modules
+README.md

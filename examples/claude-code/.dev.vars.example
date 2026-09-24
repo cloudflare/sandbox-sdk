@@ -1,8 +1,0 @@
-# Set ONE of the following. The credential stays in the worker;
-# only a placeholder is forwarded into the container.
-
-# Pay-per-token
-ANTHROPIC_API_KEY=
-
-# OR Claude.ai subscription. Get a token by running: claude setup-token
-CLAUDE_CODE_OAUTH_TOKEN=

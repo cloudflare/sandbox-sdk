@@ -1,0 +1,37 @@
+{
+  "name": "sandbox-s3-native-local-test",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "S3NativeLocalSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "S3NativeLocalSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "../s3-lifecycle/Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "S3NativeLocalSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}

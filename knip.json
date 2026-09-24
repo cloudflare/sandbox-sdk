@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "devin/src/index.ts",
+        "examples/*/src/index.ts",
+        "examples/coding-agents/*/src/index.ts"
+      ],
+      "ignore": ["examples/*/app/**", "openai/**", "tools/oxlint/anti-slop/**"],
+      "ignoreDependencies": ["cloudflare"]
+    },
+    "packages/sandbox": {
+      "entry": ["src/index.ts", "tests/fixtures/s3-native-local/worker.ts"]
+    }
+  }
+}

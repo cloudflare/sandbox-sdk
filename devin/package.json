@@ -1,0 +1,27 @@
+{
+  "name": "devin-outpost",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260914.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.137.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DEVIN_OUTPOST_ID": {
+        "description": "The ID of the outpost you created in Devin."
+      },
+      "DEVIN_API_TOKEN": {
+        "description": "A Devin service user token with the Run outpost workers permission."
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DEVIN_OUTPOST_SESSION_ID:?required}"
+: "${DEVIN_OUTPOST_ID:?required}"
+: "${DEVIN_WORKER_ACCEPTOR_ID:?required}"
+: "${DEVIN_API_TOKEN:?required}"
+: "${DEVIN_API_URL:?required}"
+
+# The Durable Object snapshots the Container after this file appears.
+readonly exit_marker=/var/lib/devin-outpost/exited
+
+# A Container started from a snapshot runs this script again, so clear the
+# marker that the snapshot captured.
+rm -f "$exit_marker"
+mkdir -p "$(dirname "$exit_marker")" /workspace
+cd /workspace
+
+# `devin worker start` claims the session, downloads the matching
+# devin-remote binary, and runs it until Devin suspends or ends the session.
+devin worker start \
+  --session="$DEVIN_OUTPOST_SESSION_ID" \
+  --outpost="$DEVIN_OUTPOST_ID" \
+  --acceptor-id="$DEVIN_WORKER_ACCEPTOR_ID" \
+  --token="$DEVIN_API_TOKEN" \
+  --api-url="$DEVIN_API_URL" &
+devin_pid=$!
+
+# Forward stop signals from the platform to the Devin CLI.
+terminate() {
+  trap - TERM INT
+  kill "-$1" "$devin_pid" 2>/dev/null || true
+  wait "$devin_pid" 2>/dev/null || true
+  exit "$2"
+}
+trap 'terminate TERM 143' TERM
+trap 'terminate INT 130' INT
+
+set +e
+wait "$devin_pid"
+status=$?
+set -e
+
+# snapshotContainer() needs a running Container, so stay up after the CLI
+# exits. The Durable Object destroys the Container once the snapshot is saved.
+echo "Devin CLI exited with status ${status}; waiting for a snapshot"
+printf '%s\n' "$status" > "$exit_marker"
+sleep infinity &
+wait $!

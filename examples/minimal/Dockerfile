@@ -1,4 +1,11 @@
-FROM docker.io/cloudflare/sandbox:0.12.1
+# The donor image ships the helper that Files uses. Keep its tag equal to the
+# installed @cloudflare/sandbox version.
+ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.0
+FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
 
-# Documents the ports this application uses (standard Docker convention)
+FROM alpine:3.23
+COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
+RUN mkdir -p /workspace
+# Local Container images must declare a port. This Worker does not listen on it.
 EXPOSE 8080
+CMD ["sleep", "infinity"]

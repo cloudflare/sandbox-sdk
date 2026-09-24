@@ -1,9 +1,0 @@
-{
-  "extends": "@repo/typescript-config/base.json",
-  "compilerOptions": {
-    "types": ["node", "vitest", "@cloudflare/workers-types"],
-    "lib": ["ES2022"]
-  },
-  "include": ["**/*.ts"],
-  "exclude": ["test-worker/**", "browser/**", "node_modules"]
-}

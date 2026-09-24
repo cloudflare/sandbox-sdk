@@ -1,0 +1,269 @@
+import { protocolError } from "./errors.js";
+
+export type ContainerExecutor = Pick<Container, "exec">;
+
+export const SHIM_PATH = "/usr/local/bin/sandbox-shim";
+
+const MAGIC = new Uint8Array([0x53, 0x42, 0x58, 0x46]);
+const PROTOCOL_VERSION = 1;
+const HEADER_LENGTH = 10;
+const ERROR_PREFIX_LENGTH = 4;
+const MAX_ERROR_MESSAGE_LENGTH = 64 * 1024;
+
+const FRAME_SUCCESS = 0;
+const FRAME_FILE_ERROR = 1;
+const FRAME_DATA = 2;
+
+type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
+
+export type ShimControlFrame =
+  | { readonly kind: "success" }
+  | { readonly kind: "fileError"; readonly errno: number; readonly detail: string }
+  | { readonly kind: "data"; readonly payload: Uint8Array };
+
+class AbortMonitor {
+  /**
+   * Follows the caller's signal until the shim settles. The caller's signal can outlive the
+   * call, as AbortSignal.timeout() does, and signalling an exited process logs a runtime error.
+   */
+  readonly signal: AbortSignal | undefined;
+  readonly #promise: Promise<never> | undefined;
+  #dispose: () => void = () => undefined;
+
+  constructor(signal: AbortSignal | undefined) {
+    if (signal === undefined) return;
+    const linked = new AbortController();
+    this.signal = linked.signal;
+
+    this.#promise = new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        linked.abort(signal.reason);
+        reject(signal.reason);
+        return;
+      }
+
+      const onAbort = () => {
+        this.dispose();
+        linked.abort(signal.reason);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.#dispose = () => signal.removeEventListener("abort", onAbort);
+    });
+    void this.#promise.catch(() => undefined);
+  }
+
+  waitFor<Value>(operation: Promise<Value>): Promise<Value> {
+    if (this.#promise === undefined) return operation;
+    return Promise.race([this.#promise, operation]);
+  }
+
+  dispose(): void {
+    this.#dispose();
+    this.#dispose = () => undefined;
+  }
+}
+
+export class ShimSession {
+  readonly process: ExecProcess;
+  readonly #abort: AbortMonitor;
+  #settled = false;
+
+  private constructor(process: ExecProcess, abort: AbortMonitor) {
+    this.process = process;
+    this.#abort = abort;
+  }
+
+  static async start(
+    container: ContainerExecutor,
+    command: string[],
+    options: ContainerExecOptions,
+  ): Promise<ShimSession> {
+    const abort = new AbortMonitor(options.signal);
+    try {
+      const process = await abort.waitFor(
+        container.exec(command, { ...options, signal: abort.signal }),
+      );
+      return new ShimSession(process, abort);
+    } catch (error) {
+      abort.dispose();
+      throw error;
+    }
+  }
+
+  openStderrControl(): ShimControl {
+    if (this.process.stderr === null) {
+      throw protocolError("sandbox-shim did not provide stderr");
+    }
+    return new ShimControl(this.process.stderr.getReader(), this);
+  }
+
+  openStdoutControl(): ShimControl {
+    if (this.process.stdout === null) {
+      throw protocolError("sandbox-shim did not provide stdout");
+    }
+    return new ShimControl(this.process.stdout.getReader(), this);
+  }
+
+  openStdoutReader(): ReadableStreamDefaultReader<Uint8Array> {
+    if (this.process.stdout === null) {
+      throw protocolError("sandbox-shim did not provide stdout");
+    }
+    return this.process.stdout.getReader();
+  }
+
+  openStdinWriter(): WritableStreamDefaultWriter<Uint8Array> {
+    if (this.process.stdin === null) {
+      throw protocolError("sandbox-shim did not provide stdin");
+    }
+    return this.process.stdin.getWriter();
+  }
+
+  waitFor<Value>(operation: Promise<Value>): Promise<Value> {
+    return this.#abort.waitFor(operation);
+  }
+
+  finish(): void {
+    if (this.#settled) return;
+    this.#settled = true;
+    this.#abort.dispose();
+  }
+
+  /**
+   * Waits for a shim that already reported its outcome to exit, so cleanup does not signal an
+   * exited process. Never throws: the reported outcome stays authoritative, and if the exit is
+   * not observed, terminate() still cleans up.
+   */
+  async settle(): Promise<void> {
+    try {
+      await this.waitFor(this.process.exitCode);
+      this.finish();
+    } catch {
+      // Aborted, or the exit status was lost with the connection.
+    }
+  }
+
+  terminate(): void {
+    if (this.#settled) return;
+    this.#settled = true;
+    this.#abort.dispose();
+    try {
+      this.process.kill(9);
+    } catch {
+      // The process may already have exited.
+    }
+  }
+}
+
+export class ShimControl {
+  readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
+  readonly #session: ShimSession;
+  #pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
+
+  constructor(reader: ReadableStreamDefaultReader<Uint8Array>, session: ShimSession) {
+    this.#reader = reader;
+    this.#session = session;
+  }
+
+  async readFrame(): Promise<ShimControlFrame> {
+    const header = await this.#readExactly(HEADER_LENGTH);
+    validateHeader(header);
+    const frameKind = header[5];
+    const payloadLength = new DataView(header.buffer, header.byteOffset + 6, 4).getUint32(0, true);
+
+    if (frameKind === FRAME_SUCCESS) {
+      if (payloadLength !== 0) {
+        throw protocolError("sandbox-shim returned invalid control data");
+      }
+      return { kind: "success" };
+    }
+    if (frameKind === FRAME_DATA) {
+      return { kind: "data", payload: await this.#readExactly(payloadLength) };
+    }
+    if (frameKind !== FRAME_FILE_ERROR) {
+      throw protocolError(`sandbox-shim returned unknown control status ${frameKind}`);
+    }
+    if (payloadLength < ERROR_PREFIX_LENGTH) {
+      throw protocolError("sandbox-shim returned invalid control data");
+    }
+    if (payloadLength > ERROR_PREFIX_LENGTH + MAX_ERROR_MESSAGE_LENGTH) {
+      throw protocolError("sandbox-shim error message exceeded its size limit");
+    }
+
+    const payload = await this.#readExactly(payloadLength);
+    const errno = new DataView(payload.buffer, payload.byteOffset, ERROR_PREFIX_LENGTH).getInt32(
+      0,
+      true,
+    );
+    if (errno <= 0) {
+      throw protocolError(`sandbox-shim returned invalid errno ${errno}`);
+    }
+    return {
+      kind: "fileError",
+      errno,
+      detail: decodeErrorDetail(payload.subarray(ERROR_PREFIX_LENGTH)),
+    };
+  }
+
+  async expectEnd(): Promise<void> {
+    const trailing =
+      this.#pending.length === 0
+        ? await this.#session.waitFor(this.#reader.read())
+        : { done: false as const, value: this.#pending };
+    if (!trailing.done) {
+      throw protocolError("sandbox-shim returned trailing control data");
+    }
+  }
+
+  discard(reason: CancellationReason): void {
+    void this.#reader.cancel(reason).then(
+      () => this.#reader.releaseLock(),
+      () => this.#reader.releaseLock(),
+    );
+  }
+
+  releaseLock(): void {
+    this.#reader.releaseLock();
+  }
+
+  async #readExactly(length: number): Promise<Uint8Array> {
+    const result = new Uint8Array(length);
+    let offset = 0;
+
+    while (offset < length) {
+      if (this.#pending.length === 0) {
+        const next = await this.#session.waitFor(this.#reader.read());
+        if (next.done) {
+          throw protocolError("sandbox-shim returned truncated control data");
+        }
+        this.#pending = next.value;
+      }
+
+      const count = Math.min(length - offset, this.#pending.length);
+      result.set(this.#pending.subarray(0, count), offset);
+      this.#pending = this.#pending.subarray(count);
+      offset += count;
+    }
+
+    return result;
+  }
+}
+
+function decodeErrorDetail(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (cause) {
+    throw protocolError("sandbox-shim returned a non-UTF-8 error message", cause);
+  }
+}
+
+function validateHeader(header: Uint8Array): void {
+  for (let index = 0; index < MAGIC.length; index += 1) {
+    if (header[index] !== MAGIC[index]) {
+      throw protocolError("sandbox-shim returned invalid protocol magic");
+    }
+  }
+  if (header[4] !== PROTOCOL_VERSION) {
+    throw protocolError(`sandbox-shim protocol ${header[4]} is not supported`);
+  }
+}
