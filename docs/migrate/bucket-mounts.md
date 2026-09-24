@@ -77,7 +77,7 @@ Scope the token to the bucket, and to read-only access when the guest does not w
 
 ## 4. Replace `localBucket`
 
-0.12 copied files between the Container and an R2 binding during `wrangler dev`, because local Containers could not use FUSE. Local Containers can now, so use the same `S3Mounts` code in development as in production, and point it at an S3-compatible server on your machine, such as MinIO. This needs Wrangler 4.137.0. Wrangler 4.131.2 does not run Durable Object Containers locally.
+0.12 copied files between the Container and an R2 binding during `wrangler dev`, because local Containers could not use FUSE. Local Containers can now, so use the same `S3Mounts` code in development as in production, and point it at an S3-compatible server on your machine, such as MinIO. This needs Wrangler 4.137.0 or later. Wrangler 4.131.2 does not run Durable Object Containers locally.
 
 Done when a file written through the mount under `wrangler dev` appears in the local bucket. [Develop locally](../s3-mounts.md#develop-locally) shows the commands.
 

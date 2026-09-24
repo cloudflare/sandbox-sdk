@@ -159,7 +159,7 @@ npx wrangler@4.137.0 dev --var S3_ENDPOINT:http://localhost:9000 --var S3_BUCKET
   --var S3_ACCESS_KEY_ID:minioadmin --var S3_SECRET_ACCESS_KEY:minioadmin
 ```
 
-Wrangler 4.137.0 runs Durable Object Containers locally. Wrangler 4.131.2 does not. Local FUSE needs Docker as described in [step 1](#1-prepare-the-image).
+Use Wrangler 4.137.0 or later, which runs Durable Object Containers locally. Wrangler 4.131.2 does not. Local FUSE needs Docker as described in [step 1](#1-prepare-the-image).
 
 ## Next steps
 

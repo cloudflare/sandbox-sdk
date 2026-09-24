@@ -31,7 +31,7 @@ Create a Cloudflare API token with the **AI Gateway Run** permission. The first 
 ```sh
 npm run shim:build
 printf '{"AI_GATEWAY_TOKEN":"%s"}\n' "$AI_GATEWAY_TOKEN" > .secrets.json
-npx --yes wrangler@4.131.2 deploy --config examples/coding-agents/pi/wrangler.jsonc --secrets-file .secrets.json
+npx --yes wrangler@4.137.0 deploy --config examples/coding-agents/pi/wrangler.jsonc --secrets-file .secrets.json
 rm .secrets.json
 ```
 

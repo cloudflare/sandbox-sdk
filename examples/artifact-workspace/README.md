@@ -11,9 +11,9 @@ Edit `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` in `wrangler.jsonc`. The endpoi
 Add credentials as Worker secrets:
 
 ```sh
-npx --yes wrangler@4.131.2 secret put S3_ACCESS_KEY_ID \
+npx --yes wrangler@4.137.0 secret put S3_ACCESS_KEY_ID \
   --config examples/artifact-workspace/wrangler.jsonc
-npx --yes wrangler@4.131.2 secret put S3_SECRET_ACCESS_KEY \
+npx --yes wrangler@4.137.0 secret put S3_SECRET_ACCESS_KEY \
   --config examples/artifact-workspace/wrangler.jsonc
 ```
 
@@ -61,4 +61,4 @@ S3 is object storage. Do not depend on POSIX locking, atomic rename, or immediat
 
 Authenticate these routes in production and derive the sandbox name from the authenticated job or tenant. Prefer read-only mounts when the guest does not need to write.
 
-The pinned Wrangler 4.131.2 deploys this example but does not run it locally. Wrangler 4.137.0 runs it under `wrangler dev` against a local S3 server. See [Develop locally](../../docs/s3-mounts.md#develop-locally).
+To run this example under `wrangler dev` against a local S3 server, see [Develop locally](../../docs/s3-mounts.md#develop-locally).
