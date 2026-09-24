@@ -8,7 +8,7 @@ const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1_000;
 const DEFAULT_TTL_SECONDS = 3 * 24 * 60 * 60;
 // Outside every directory a backup can cover, so an archive never includes itself.
-const ARCHIVE_DIRECTORY = "/run/backups";
+const ARCHIVE_DIRECTORY = "/var/tmp/backups";
 const SANDBOX_NAME_KEY = "sandbox-name";
 
 // Restoring replaces the directory, so backups are limited to directories that hold work.

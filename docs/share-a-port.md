@@ -89,7 +89,7 @@ await container.exec(
     'dir=$1; port=$2; mkdir -p "$dir"; echo "$$" >"$dir/pid"; ' +
       'exec cloudflared tunnel --no-autoupdate --url "http://localhost:$port" >"$dir/log" 2>&1',
     "tunnel",
-    `/run/tunnels/${port}`,
+    `/var/lib/tunnels/${port}`,
     String(port),
   ],
   { stdout: "ignore", stderr: "ignore" },
@@ -115,7 +115,7 @@ await container.exec(
   [
     "/bin/sh",
     "-c",
-    'exec cloudflared tunnel --no-autoupdate run --url "http://localhost:$1" >/run/named-tunnel.log 2>&1',
+    'exec cloudflared tunnel --no-autoupdate run --url "http://localhost:$1" >/var/log/named-tunnel.log 2>&1',
     "tunnel",
     String(port),
   ],

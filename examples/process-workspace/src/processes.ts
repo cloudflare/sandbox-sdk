@@ -3,7 +3,7 @@ import { z } from "zod";
 
 // Each process gets a directory: process.json, pid, stdout.log, stderr.log, and exit-code once it ends.
 // The directory lives on the Container's disk, so it goes away when the Container stops, like the process.
-const ROOT = "/run/processes";
+const ROOT = "/var/lib/processes";
 
 // Runs the command in its own process group, so a kill also reaches its children. The group
 // leader records its PID, then becomes the command. It runs in the foreground, because a shell

@@ -31,8 +31,8 @@ const RUN_SCRIPT = `dir=$1; shift
 setsid sh -c 'echo "$$" >"$0/pid"; exec "$@"' "$dir" "$@" >"$dir/stdout.log" 2>"$dir/stderr.log"
 echo "$?" >"$dir/exit-code.tmp" && mv "$dir/exit-code.tmp" "$dir/exit-code"`;
 
-const dir = `/run/processes/${id}`;
-await files.mkdir("/run/processes", { recursive: true });
+const dir = `/var/lib/processes/${id}`;
+await files.mkdir("/var/lib/processes", { recursive: true });
 await files.mkdir(dir); // Throws SandboxFileError with code EEXIST if the ID is taken.
 await files.writeFile(`${dir}/process.json`, JSON.stringify({ id, command, cwd }));
 await container.exec(["/bin/sh", "-c", RUN_SCRIPT, "run", dir, ...command], {
@@ -62,7 +62,7 @@ else echo lost
 fi
 ```
 
-The example runs this in a loop over every process directory, in one `exec()` call, so listing ten processes costs one command. Use `files.readDirectory("/run/processes")` to find the directories.
+The example runs this in a loop over every process directory, in one `exec()` call, so listing ten processes costs one command. Use `files.readDirectory("/var/lib/processes")` to find the directories.
 
 ## 4. Read and follow output
 
