@@ -2,7 +2,11 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["examples/*/src/index.ts", "examples/coding-agents/*/src/index.ts"],
+      "entry": [
+        "devin/src/index.ts",
+        "examples/*/src/index.ts",
+        "examples/coding-agents/*/src/index.ts"
+      ],
       "ignore": ["examples/*/app/**", "tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["cloudflare"]
     },

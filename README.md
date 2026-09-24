@@ -36,6 +36,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Outbound workspace](examples/outbound-workspace): change which hosts a sandbox reaches while it runs
 - [Terminal workspace](examples/terminal-workspace): open a live shell in the browser that survives reconnects
 - [Coding agents](examples/coding-agents): run a coding agent on a GitHub repository
+- [Devin Outposts](devin): run each Devin session in its own Container and snapshot it on suspend
 
 ## In this repository
 
