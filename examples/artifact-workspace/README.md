@@ -61,4 +61,4 @@ S3 is object storage. Do not depend on POSIX locking, atomic rename, or immediat
 
 Authenticate these routes in production and derive the sandbox name from the authenticated job or tenant. Prefer read-only mounts when the guest does not need to write.
 
-The pinned public Wrangler deploys this example. Local development currently needs a workers-sdk and workerd pair with named Durable Object images and FUSE support. Repository maintainers can validate that path with `npm run test:s3-native-local`.
+The pinned Wrangler 4.131.2 deploys this example but does not run it locally. Wrangler 4.137.0 runs it under `wrangler dev` against a local S3 server. See [Develop locally](../../docs/s3-mounts.md#develop-locally).

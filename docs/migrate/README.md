@@ -22,5 +22,6 @@ Start with the first page. Then do the pages for the features you use.
 5. [Move outbound rules](outbound-network.md): outbound handlers, allowed and denied hosts, runtime changes
 6. [Move backups](backups.md): `createBackup()`, `restoreBackup()`, backup options, backups made by 0.12
 7. [Move preview URLs and tunnels](ports-and-tunnels.md): `exposePort()`, `proxyToSandbox()`, `waitForPort()`, quick and named tunnels
+8. [Move bucket mounts](bucket-mounts.md): `mountBucket()`, R2 binding mounts, `localBucket`, mount errors
 
 For every 0.12 API and what replaces it, see the [API map](api-map.md).

@@ -143,6 +143,24 @@ S3 and `s3fs` are not a normal filesystem:
 - Cached reads can remain after unmount
 - Interrupted writes can leave remote objects to clean up
 
+## Develop locally
+
+Use the same code under `wrangler dev`, and point the mount at an S3-compatible server on your machine, such as MinIO. The gateway runs in your Worker on your machine, so it reaches the server at `localhost`.
+
+Done when a file written through the mount under `wrangler dev` appears in the local bucket.
+
+```sh
+docker run --detach --name minio --publish 9000:9000 \
+  --env MINIO_ROOT_USER=minioadmin --env MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data
+docker exec minio sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb local/artifacts'
+
+npx wrangler@4.137.0 dev --var S3_ENDPOINT:http://localhost:9000 --var S3_BUCKET:artifacts \
+  --var S3_ACCESS_KEY_ID:minioadmin --var S3_SECRET_ACCESS_KEY:minioadmin
+```
+
+Wrangler 4.137.0 runs Durable Object Containers locally. Wrangler 4.131.2 does not. Local FUSE needs Docker as described in [step 1](#1-prepare-the-image).
+
 ## Next steps
 
 - [S3Mounts API](s3-mounts-api.md)
