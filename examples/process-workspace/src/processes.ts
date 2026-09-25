@@ -38,13 +38,14 @@ while :; do
   sleep 0.2
 done`;
 
-// Exits with the process's exit code, or 255 if it ended without recording one.
+// Prints the process's exit code, or lost if it ended without recording one. It exits 0 either way,
+// so the process's own exit code cannot be mistaken for the wait being killed.
 const WAIT_FOR_EXIT_SCRIPT = `dir=$1
 while [ ! -e "$dir/exit-code" ]; do
-  if [ -e "$dir/pid" ] && ! kill -0 "$(cat "$dir/pid")" 2>/dev/null && [ ! -e "$dir/exit-code" ]; then exit 255; fi
+  if [ -e "$dir/pid" ] && ! kill -0 "$(cat "$dir/pid")" 2>/dev/null && [ ! -e "$dir/exit-code" ]; then echo lost; exit 0; fi
   sleep 0.2
 done
-exit "$(cat "$dir/exit-code")"`;
+cat "$dir/exit-code"`;
 
 const ProcessRecord = z.object({
   id: z.string(),
@@ -201,7 +202,8 @@ export class Processes {
     );
     if (result.exitCode === 0) return { state: "matched", line: result.stdout.trimEnd() };
     if (result.exitCode === 3) return { state: "exited" };
-    return { state: "timed-out" };
+    if (result.timedOut) return { state: "timed-out" };
+    throw new Error(`wait-for-log exited with ${result.exitCode}`);
   }
 
   async waitForExit(id: string, timeoutMs: number): Promise<WaitForExitResult> {
@@ -209,10 +211,12 @@ export class Processes {
       ["/bin/sh", "-c", WAIT_FOR_EXIT_SCRIPT, "wait-for-exit", directory(id)],
       timeoutMs,
     );
-    // The timeout kills the wait with SIGKILL, so 137 means it timed out.
-    if (result.exitCode === 137) return { state: "timed-out" };
-    if (result.exitCode === 255) return { state: "lost" };
-    return { state: "exited", exitCode: result.exitCode };
+    if (result.exitCode !== 0) {
+      if (result.timedOut) return { state: "timed-out" };
+      throw new Error(`wait-for-exit exited with ${result.exitCode}`);
+    }
+    const value = result.stdout.trim();
+    return value === "lost" ? { state: "lost" } : { state: "exited", exitCode: Number(value) };
   }
 
   async #status(directories: string[]): Promise<ProcessInfo[]> {
@@ -227,7 +231,11 @@ export class Processes {
     return processes;
   }
 
-  async #run(command: string[], timeoutMs?: number): Promise<{ exitCode: number; stdout: string }> {
+  // timedOut says the timer killed the command. Exit code 137 alone means any SIGKILL.
+  async #run(
+    command: string[],
+    timeoutMs?: number,
+  ): Promise<{ exitCode: number; stdout: string; timedOut: boolean }> {
     // Not AbortSignal.timeout(): it stays armed after the command exits, and signalling an
     // exited process logs an internal error. Clear the timer instead.
     const abort = new AbortController();
@@ -235,7 +243,11 @@ export class Processes {
     try {
       const process = await this.#container.exec(command, { signal: abort.signal });
       const output = await process.output();
-      return { exitCode: output.exitCode, stdout: new TextDecoder().decode(output.stdout) };
+      return {
+        exitCode: output.exitCode,
+        stdout: new TextDecoder().decode(output.stdout),
+        timedOut: abort.signal.aborted,
+      };
     } finally {
       clearTimeout(timer);
     }
