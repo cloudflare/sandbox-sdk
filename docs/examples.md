@@ -32,10 +32,10 @@ Start from an existing example's `wrangler.jsonc`. The examples share these sett
 - `name` is `sandbox-<NAME>-example`.
 - The Durable Object binding is `SANDBOX`.
 - The `containers` entry uses `scheduling_policy: "durable_object"` and builds `./Dockerfile` as an image named `sandbox`.
-- `nodejs_compat` is on when the example uses `Files` or `S3Mounts`.
+- `nodejs_compat` is on when the example uses `Files`, `S3Mounts`, or `DirectoryBackups`.
 - Observability is on.
 
-An example that uses `Files` or `S3Mounts` copies the shim from the local donor image:
+An example that uses `Files`, `S3Mounts`, or `DirectoryBackups` copies the shim from the local donor image:
 
 ```dockerfile
 ARG SANDBOX_TOOLS_IMAGE=sandbox-tools:local

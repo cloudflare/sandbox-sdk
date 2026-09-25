@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  backupError,
   fileErrorFromErrno,
   protocolError,
+  SandboxBackupError,
   SandboxFileError,
   SandboxProtocolError,
 } from "../src/shared/errors.js";
@@ -11,6 +13,21 @@ describe("Sandbox errors", () => {
   it("exposes recognizers without public constructors", () => {
     expect(Object.keys(SandboxFileError)).toEqual(["is"]);
     expect(Object.keys(SandboxProtocolError)).toEqual(["is"]);
+  });
+
+  it("recognizes backup errors after prototype identity is lost", () => {
+    const local = backupError("BACKUP_INTEGRITY", "restore", "/workspace", "hash mismatch");
+    const crossed = Object.assign(new Error(local.message), {
+      name: local.name,
+      code: local.code,
+      operation: local.operation,
+      path: local.path,
+      detail: local.detail,
+    });
+
+    expect(SandboxBackupError.is(local)).toBe(true);
+    expect(SandboxBackupError.is(crossed)).toBe(true);
+    expect(SandboxBackupError.is(Object.assign(crossed, { code: "S3_MOUNT_BUSY" }))).toBe(false);
   });
 
   it("recognizes structured errors after prototype identity is lost", () => {

@@ -16,14 +16,22 @@ pub(crate) fn write_data(output: &mut impl Write, payload: &[u8]) -> io::Result<
 }
 
 pub(crate) fn write_file_error(output: &mut impl Write, error: &io::Error) -> io::Result<()> {
-    let detail = error.to_string();
+    write_errno(
+        output,
+        error.raw_os_error().unwrap_or(EIO),
+        &error.to_string(),
+    )
+}
+
+/// Sends a file error with an explicit errno and detail. `errno` must be positive.
+pub(crate) fn write_errno(output: &mut impl Write, errno: i32, detail: &str) -> io::Result<()> {
     let length = 4usize
         .checked_add(detail.len())
         .and_then(|length| u32::try_from(length).ok())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "error detail is too large"))?;
 
     write_header(output, FILE_ERROR, length)?;
-    output.write_all(&error.raw_os_error().unwrap_or(EIO).to_le_bytes())?;
+    output.write_all(&errno.to_le_bytes())?;
     output.write_all(detail.as_bytes())?;
     output.flush()
 }

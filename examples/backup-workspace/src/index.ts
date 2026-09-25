@@ -1,15 +1,21 @@
-import { Files } from "@cloudflare/sandbox";
+import {
+  type DirectoryBackup,
+  type DirectoryBackupGatewayBinding,
+  DirectoryBackups,
+  SandboxBackupError,
+  SandboxFileError,
+} from "@cloudflare/sandbox";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
+
+export { DirectoryBackupGateway } from "@cloudflare/sandbox";
 
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const BACKUP_ID_PATTERN = /^[0-9a-f-]{36}$/;
 const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
-const COMMAND_TIMEOUT_MS = 10 * 60 * 1_000;
+const OPERATION_TIMEOUT_MS = 10 * 60 * 1_000;
 const DEFAULT_TTL_SECONDS = 3 * 24 * 60 * 60;
-// Outside every directory a backup can cover, so an archive never includes itself.
-const ARCHIVE_DIRECTORY = "/var/tmp/backups";
-const SANDBOX_NAME_KEY = "sandbox-name";
+const BACKUP_KEY_PREFIX = "backup:";
 
 // Restoring replaces the directory, so backups are limited to directories that hold work.
 const BackupDirectory = z
@@ -25,10 +31,10 @@ const BackupDirectory = z
 const CreateBackupRequest = z.object({
   dir: BackupDirectory,
   name: z.string().max(200).optional(),
-  // GNU tar patterns. "node_modules" matches at any depth; "./build" only at the top.
-  excludes: z.array(z.string().min(1).max(200)).max(100).default([]),
-  // Leave out files that .gitignore rules ignore. Needs git in the image.
-  gitignore: z.boolean().default(false),
+  // gitignore patterns, relative to dir. "node_modules/" matches at any depth; "/build" only
+  // at the top.
+  exclude: z.array(z.string().min(1).max(200)).max(100).optional(),
+  gitignore: z.boolean().optional(),
   ttlSeconds: z
     .int()
     .min(60)
@@ -38,68 +44,36 @@ const CreateBackupRequest = z.object({
 const RestoreRequest = z.object({ dir: BackupDirectory.optional() });
 const CommandRequest = z.object({ argv: z.array(z.string()).min(1) });
 
-// Writes a gzip-compressed tar archive of the directory. The remaining arguments are tar
-// options, such as --exclude=node_modules.
-const ARCHIVE_SCRIPT = `dir=$1; archive=$2; mode=$3; shift 3
-if [ "$mode" = gitignore ]; then
-  command -v git >/dev/null || { echo "git is not installed" >&2; exit 3; }
-  if git -c safe.directory='*' -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    cd "$dir" || exit 2
-    # git lists the files that no .gitignore rule ignores. Keep .git, so history survives.
-    { git -c safe.directory='*' ls-files -z --cached --others --exclude-standard
-      if [ -d .git ]; then printf '.git\\0'; fi
-    } | tar -C "$dir" "$@" --ignore-failed-read --null -T - -czf "$archive"
-    exit $?
-  fi
-fi
-exec tar -C "$dir" "$@" -czf "$archive" .`;
-
-// Replaces the directory with the archive read from standard input.
-const RESTORE_SCRIPT = `set -e
-dir=$1
-rm -rf -- "$dir"
-mkdir -p -- "$dir"
-tar -xzf - -C "$dir"`;
-
 interface Env {
   SANDBOX: DurableObjectNamespace<BackupSandbox>;
   BACKUPS: R2Bucket;
 }
 
-interface Backup {
-  id: string;
-  dir: string;
-  name?: string;
-  size: number;
+interface BackupSandboxState extends DurableObjectState {
+  readonly exports: Cloudflare.Exports & {
+    readonly DirectoryBackupGateway: DirectoryBackupGatewayBinding;
+  };
+}
+
+// The record DirectoryBackups returns, with the expiry this example adds.
+interface StoredBackup {
+  backup: DirectoryBackup;
   createdAt: string;
   expiresAt: string;
 }
 
-// Stored as R2 custom metadata, so every value is a string.
-type BackupMetadata = {
-  dir: string;
-  createdAt: string;
-  expiresAt: string;
-  name?: string;
-};
-
-type CreateBackupResult =
-  | { state: "created"; backup: Backup }
-  | { state: "failed"; exitCode: number; stderr: string };
-
-type RestoreBackupResult =
-  | { state: "restored"; id: string; dir: string }
-  | { state: "not-found" }
-  | { state: "failed"; exitCode: number; stderr: string };
-
 export class BackupSandbox extends DurableObject<Env> {
   readonly #container: Container;
-  readonly #files: Files;
+  readonly #backups: DirectoryBackups;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: BackupSandboxState, env: Env) {
     super(ctx, env);
     this.#container = requireContainer(ctx);
-    this.#files = new Files(this.#container);
+    // Each Durable Object keeps its own records, so every sandbox can share one prefix.
+    this.#backups = new DirectoryBackups(this.#container, ctx.exports.DirectoryBackupGateway, {
+      binding: "BACKUPS",
+      prefix: "backups/",
+    });
     // Each Durable Object instance must set its own timeout; it is not inherited.
     if (this.#container.running) {
       void ctx.blockConcurrencyWhile(() =>
@@ -111,91 +85,40 @@ export class BackupSandbox extends DurableObject<Env> {
   async createBackup(
     sandboxName: string,
     request: z.infer<typeof CreateBackupRequest>,
-  ): Promise<CreateBackupResult> {
+  ): Promise<StoredBackup> {
     await this.#ensureExecution(sandboxName);
-    const id = crypto.randomUUID();
-    const archive = `${ARCHIVE_DIRECTORY}/${id}.tar.gz`;
-    await this.#files.mkdir(ARCHIVE_DIRECTORY, { recursive: true });
-    try {
-      const mode = request.gitignore ? "gitignore" : "all";
-      const excludes = request.excludes.map((pattern) => `--exclude=${pattern}`);
-      const result = await this.#run([
-        "/bin/sh",
-        "-c",
-        ARCHIVE_SCRIPT,
-        "archive",
-        request.dir,
-        archive,
-        mode,
-        ...excludes,
-      ]);
-      // tar exits 1 when a file changed while it was read. The archive is still complete.
-      if (result.exitCode > 1) return { state: "failed", ...result };
-
-      const { size } = await this.#files.stat(archive);
-      const createdAt = new Date();
-      const backup: Backup = {
-        id,
-        dir: request.dir,
-        name: request.name,
-        size: Number(size),
-        createdAt: createdAt.toISOString(),
-        expiresAt: new Date(createdAt.getTime() + request.ttlSeconds * 1_000).toISOString(),
-      };
-      const customMetadata: BackupMetadata = {
-        dir: backup.dir,
-        createdAt: backup.createdAt,
-        expiresAt: backup.expiresAt,
-      };
-      if (backup.name !== undefined) customMetadata.name = backup.name;
-      const contents = await this.#files.readFile(archive);
-      if (contents.body === null) throw new Error("readFile() returned no body");
-      // R2 needs the length of a streamed upload before it starts.
-      const { readable, writable } = new FixedLengthStream(size);
-      await Promise.all([
-        contents.body.pipeTo(writable),
-        this.env.BACKUPS.put(objectKey(sandboxName, id), readable, { customMetadata }),
-      ]);
-      await this.#scheduleExpiry(sandboxName, new Date(backup.expiresAt));
-      return { state: "created", backup };
-    } finally {
-      await this.#files.remove(archive, { force: true });
-    }
+    const { ttlSeconds, ...options } = request;
+    const backup = await withTimeout((signal) => this.#backups.backup({ ...options, signal }));
+    const createdAt = new Date();
+    const stored: StoredBackup = {
+      backup,
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + ttlSeconds * 1_000).toISOString(),
+    };
+    this.ctx.storage.kv.put(BACKUP_KEY_PREFIX + backup.id, stored);
+    await this.#scheduleExpiry(new Date(stored.expiresAt));
+    return stored;
   }
 
-  async listBackups(sandboxName: string): Promise<Backup[]> {
-    const backups: Backup[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.env.BACKUPS.list({
-        prefix: `${sandboxName}/`,
-        include: ["customMetadata"],
-        cursor,
-      });
-      for (const object of page.objects) backups.push(toBackup(object));
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor !== undefined);
-    return backups;
+  listBackups(): StoredBackup[] {
+    const entries = this.ctx.storage.kv.list<StoredBackup>({ prefix: BACKUP_KEY_PREFIX });
+    return Array.from(entries, ([, stored]) => stored);
   }
 
   // Replaces the directory, in the running Container or a new one.
-  async restoreBackup(sandboxName: string, id: string, dir?: string): Promise<RestoreBackupResult> {
-    const object = await this.env.BACKUPS.get(objectKey(sandboxName, id));
-    if (object === null) return { state: "not-found" };
-    const target = dir ?? toBackup(object).dir;
+  async restoreBackup(sandboxName: string, id: string, dir?: string): Promise<string | null> {
+    const stored = this.#find(id);
+    if (stored === undefined) return null;
     await this.#ensureExecution(sandboxName);
-    const result = await this.#run(
-      ["/bin/sh", "-c", RESTORE_SCRIPT, "restore", target],
-      object.body,
-    );
-    if (result.exitCode !== 0) return { state: "failed", ...result };
-    return { state: "restored", id, dir: target };
+    await withTimeout((signal) => this.#backups.restore(stored.backup, { dir, signal }));
+    return dir ?? stored.backup.dir;
   }
 
-  async deleteBackup(sandboxName: string, id: string): Promise<boolean> {
-    const key = objectKey(sandboxName, id);
-    if ((await this.env.BACKUPS.head(key)) === null) return false;
-    await this.env.BACKUPS.delete(key);
+  async deleteBackup(id: string): Promise<boolean> {
+    const stored = this.#find(id);
+    if (stored === undefined) return false;
+    await this.#backups.delete(stored.backup);
+    this.ctx.storage.kv.delete(BACKUP_KEY_PREFIX + id);
     return true;
   }
 
@@ -204,7 +127,15 @@ export class BackupSandbox extends DurableObject<Env> {
     argv: string[],
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     await this.#ensureExecution(sandboxName);
-    return this.#run(argv);
+    const process = await withTimeout((signal) =>
+      this.#container.exec(argv, { cwd: "/workspace", signal }).then((child) => child.output()),
+    );
+    const decoder = new TextDecoder();
+    return {
+      exitCode: process.exitCode,
+      stdout: decoder.decode(process.stdout),
+      stderr: decoder.decode(process.stderr),
+    };
   }
 
   async resetExecution(): Promise<void> {
@@ -213,15 +144,13 @@ export class BackupSandbox extends DurableObject<Env> {
 
   // Deletes expired backups, then waits for the next one to expire.
   override async alarm(): Promise<void> {
-    const sandboxName = this.ctx.storage.kv.get<string>(SANDBOX_NAME_KEY);
-    if (sandboxName === undefined) return;
     const now = Date.now();
     let next: number | undefined;
-    for (const backup of await this.listBackups(sandboxName)) {
-      const expiresAt = Date.parse(backup.expiresAt);
+    for (const stored of this.listBackups()) {
+      const expiresAt = Date.parse(stored.expiresAt);
       if (expiresAt <= now) {
-        await this.env.BACKUPS.delete(objectKey(sandboxName, backup.id));
-        console.log({ event: "backup.expired", sandboxName, id: backup.id });
+        await this.deleteBackup(stored.backup.id);
+        console.log({ event: "backup.expired", id: stored.backup.id });
       } else if (next === undefined || expiresAt < next) {
         next = expiresAt;
       }
@@ -229,35 +158,14 @@ export class BackupSandbox extends DurableObject<Env> {
     if (next !== undefined) await this.ctx.storage.setAlarm(next);
   }
 
-  async #scheduleExpiry(sandboxName: string, expiresAt: Date): Promise<void> {
-    this.ctx.storage.kv.put(SANDBOX_NAME_KEY, sandboxName);
+  #find(id: string): StoredBackup | undefined {
+    return this.ctx.storage.kv.get<StoredBackup>(BACKUP_KEY_PREFIX + id);
+  }
+
+  async #scheduleExpiry(expiresAt: Date): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || expiresAt.getTime() < current) {
       await this.ctx.storage.setAlarm(expiresAt);
-    }
-  }
-
-  async #run(
-    argv: string[],
-    stdin?: ReadableStream<Uint8Array>,
-  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    // Not AbortSignal.timeout(): it stays armed after the command exits, and signalling an
-    // exited process logs an internal error. Clear the timer instead.
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), COMMAND_TIMEOUT_MS);
-    try {
-      const options: ContainerExecOptions = { cwd: "/workspace", signal: abort.signal };
-      if (stdin !== undefined) options.stdin = stdin;
-      const process = await this.#container.exec(argv, options);
-      const output = await process.output();
-      const decoder = new TextDecoder();
-      return {
-        exitCode: output.exitCode,
-        stdout: decoder.decode(output.stdout),
-        stderr: decoder.decode(output.stderr),
-      };
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -295,15 +203,11 @@ export default {
     const sandbox = env.SANDBOX.getByName(sandboxName);
     try {
       if (resource === "backups" && id === undefined && request.method === "POST") {
-        const result = await sandbox.createBackup(
-          sandboxName,
-          CreateBackupRequest.parse(await request.json()),
-        );
-        if (result.state === "failed") return Response.json(result, { status: 422 });
-        return Response.json(result.backup, { status: 201 });
+        const backup = CreateBackupRequest.parse(await request.json());
+        return Response.json(await sandbox.createBackup(sandboxName, backup), { status: 201 });
       }
       if (resource === "backups" && id === undefined && request.method === "GET") {
-        return Response.json(await sandbox.listBackups(sandboxName));
+        return Response.json(await sandbox.listBackups());
       }
       if (
         resource === "backups" &&
@@ -313,9 +217,9 @@ export default {
       ) {
         const body = request.headers.get("Content-Length") === "0" ? {} : await request.json();
         const { dir } = RestoreRequest.parse(body);
-        const result = await sandbox.restoreBackup(sandboxName, id, dir);
-        if (result.state === "not-found") return new Response("Backup not found", { status: 404 });
-        return Response.json(result, { status: result.state === "failed" ? 422 : 200 });
+        const restored = await sandbox.restoreBackup(sandboxName, id, dir);
+        if (restored === null) return new Response("Backup not found", { status: 404 });
+        return Response.json({ id, dir: restored });
       }
       if (
         resource === "backups" &&
@@ -323,7 +227,7 @@ export default {
         action === undefined &&
         request.method === "DELETE"
       ) {
-        return (await sandbox.deleteBackup(sandboxName, id))
+        return (await sandbox.deleteBackup(id))
           ? new Response(null, { status: 204 })
           : new Response("Backup not found", { status: 404 });
       }
@@ -338,8 +242,17 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     } catch (cause) {
       if (cause instanceof z.ZodError) return new Response(z.prettifyError(cause), { status: 400 });
-      if (cause instanceof SyntaxError)
+      if (cause instanceof SyntaxError) {
         return new Response("Request body must be JSON", { status: 400 });
+      }
+      // Errors keep their recognizers across Durable Object RPC.
+      if (SandboxFileError.is(cause)) {
+        return Response.json({ code: cause.code, path: cause.path }, { status: 422 });
+      }
+      if (SandboxBackupError.is(cause)) {
+        const status = cause.code === "BACKUP_NOT_FOUND" ? 404 : 502;
+        return Response.json({ code: cause.code, detail: cause.detail }, { status });
+      }
       console.error({
         event: "sandbox.request.failed",
         sandboxName,
@@ -351,21 +264,15 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-function objectKey(sandboxName: string, id: string): string {
-  return `${sandboxName}/${id}.tar.gz`;
-}
-
-function toBackup(object: R2Object): Backup {
-  const metadata = object.customMetadata ?? {};
-  const id = object.key.slice(object.key.indexOf("/") + 1, -".tar.gz".length);
-  return {
-    id,
-    dir: metadata.dir ?? "",
-    name: metadata.name,
-    size: object.size,
-    createdAt: metadata.createdAt ?? object.uploaded.toISOString(),
-    expiresAt: metadata.expiresAt ?? "",
-  };
+// Not AbortSignal.timeout(): it stays armed after the operation ends. Clear the timer instead.
+async function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), OPERATION_TIMEOUT_MS);
+  try {
+    return await operation(abort.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function requireContainer(ctx: DurableObjectState): Container {

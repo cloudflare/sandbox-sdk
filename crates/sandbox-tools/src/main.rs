@@ -1,3 +1,4 @@
+mod directory_backup;
 mod files;
 mod protocol;
 mod s3_mount;
@@ -8,12 +9,25 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 
 fn main() {
-    if let Err(error) = run(
-        std::env::args_os().skip(1),
-        io::stdin().lock(),
-        io::stdout().lock(),
-        io::stderr().lock(),
-    ) {
+    let mut args = std::env::args_os().skip(1).peekable();
+    // A directory backup reads stdin on its own thread for the whole operation, so stdin must
+    // not stay locked here.
+    let result = if args
+        .peek()
+        .is_some_and(|command| command == "directory-backup")
+    {
+        let arguments: Vec<OsString> = args.skip(1).collect();
+        directory_backup::run(&arguments, io::stdin(), &mut io::stdout().lock())
+            .map_err(|error| error.to_string())
+    } else {
+        run(
+            args,
+            io::stdin().lock(),
+            io::stdout().lock(),
+            io::stderr().lock(),
+        )
+    };
+    if let Err(error) = result {
         eprintln!("sandbox-shim: {error}");
         std::process::exit(1);
     }

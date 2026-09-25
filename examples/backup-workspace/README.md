@@ -1,6 +1,6 @@
 # Backup workspace
 
-Deploy this Worker to back up a directory in a named Container to R2, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. This example writes the archive to disk before it uploads it. For a guide that streams the archive to R2 without writing it to disk, see [Back up a directory to R2](https://developers.cloudflare.com/sandbox/files/back-up-a-directory-to-r2/).
+Deploy this Worker to back up a directory in a named Container to R2 with `DirectoryBackups`, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. The archive streams to R2 in parallel parts and never lands on the Container's disk.
 
 Done when a directory restored from R2 matches the backup, after its Container was reset.
 
@@ -24,18 +24,18 @@ Back it up without `node_modules`:
 ```sh
 curl --request POST "$WORKER_URL/sandboxes/agent-1/backups" \
   --header 'Content-Type: application/json' \
-  --data '{"dir":"/workspace/app","name":"before-upgrade","excludes":["node_modules"]}'
+  --data '{"dir":"/workspace/app","name":"before-upgrade","exclude":["node_modules/"]}'
 ```
 
-The response has the backup's `id`, `size`, and `expiresAt`, three days from now. Set `ttlSeconds` to change that.
+The response has the backup record under `backup`, with its `id`, `size`, and `sha256`, and an `expiresAt` three days from now. Set `ttlSeconds` to change that.
 
-| Field        | Meaning                                                                                   |
-| ------------ | ----------------------------------------------------------------------------------------- |
-| `dir`        | Directory under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`                      |
-| `excludes`   | GNU tar patterns. `node_modules` matches at any depth. `./build` matches only at the top. |
-| `gitignore`  | Leave out files that `.gitignore` rules ignore. Keeps `.git`, so history survives.        |
-| `ttlSeconds` | Seconds until the alarm deletes the backup. Default: three days.                          |
-| `name`       | A label returned with the backup                                                          |
+| Field        | Meaning                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `dir`        | Directory under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`                                      |
+| `exclude`    | gitignore patterns, relative to `dir`. `node_modules/` matches at any depth; `/build` only at the top.    |
+| `gitignore`  | Also leave out what `.gitignore` files and `.git/info/exclude` ignore. Keeps `.git`, so history survives. |
+| `ttlSeconds` | Seconds until the alarm deletes the backup. Default: three days.                                          |
+| `name`       | A label stored with the backup                                                                            |
 
 List backups, then reset the Container, which discards its disk:
 
@@ -50,12 +50,12 @@ Restore the backup into a new Container. Pass `{"dir": "/workspace/other"}` to r
 curl --request POST "$WORKER_URL/sandboxes/agent-1/backups/$BACKUP_ID/restore"
 ```
 
-Restoring replaces the directory: files that are not in the backup are removed. `/workspace/app/index.js` is back, and `node_modules` is not. Delete the backup when you no longer need it:
+Restoring replaces the directory: files that are not in the backup are gone. The restore unpacks beside the directory and swaps it in only after the archive checks out, so a failed restore leaves the directory as it was. `/workspace/app/index.js` is back, and `node_modules` is not. Delete the backup when you no longer need it:
 
 ```sh
 curl --request DELETE "$WORKER_URL/sandboxes/agent-1/backups/$BACKUP_ID"
 ```
 
-With `gitignore`, directories that contain no files are left out, because git lists only files.
+The Worker exports `DirectoryBackupGateway`. The Container reaches R2 only through it, and only for the one object its current operation writes or reads.
 
 Authenticate in production. This Worker runs any command, and restores over any directory it accepts.
