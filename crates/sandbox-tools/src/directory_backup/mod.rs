@@ -16,6 +16,7 @@ mod tests;
 mod transfer;
 
 use std::ffi::OsString;
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -39,7 +40,10 @@ const COMPRESSION_LEVEL: i32 = -3;
 const SIBLING_PREFIX: &str = ".sandbox-restore-";
 const MAX_TRAILING_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug)]
+/// Why an operation failed. Inside a reader or writer it travels as the payload of an
+/// `io::Error`, so it survives zstd and tar unchanged; `Failure::reading` and
+/// `Failure::writing` take it back out.
+#[derive(Clone, Debug)]
 pub(super) enum Failure {
     /// A Linux error, sent as a file error frame.
     File {
@@ -52,6 +56,50 @@ pub(super) enum Failure {
     Protocol(String),
     /// Stdin closed: nobody is waiting for a result.
     Aborted,
+}
+
+impl Failure {
+    /// The failure behind an error reading the archive, or a corrupt archive if none is.
+    pub(super) fn reading(error: io::Error) -> Self {
+        Self::carried_by(error, |error| {
+            Self::Integrity(format!("the backup is corrupt: {error}"))
+        })
+    }
+
+    /// The failure behind an error writing the archive, or a transfer failure if none is.
+    pub(super) fn writing(error: io::Error) -> Self {
+        Self::carried_by(error, |error| {
+            Self::Transfer(format!("writing the archive failed: {error}"))
+        })
+    }
+
+    fn carried_by(error: io::Error, otherwise: impl FnOnce(io::Error) -> Self) -> Self {
+        match error.downcast::<Self>() {
+            Ok(failure) => failure,
+            Err(error) => otherwise(error),
+        }
+    }
+}
+
+impl fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File { detail, .. }
+            | Self::Integrity(detail)
+            | Self::NotFound(detail)
+            | Self::Transfer(detail)
+            | Self::Protocol(detail) => formatter.write_str(detail),
+            Self::Aborted => formatter.write_str("the operation was aborted"),
+        }
+    }
+}
+
+impl std::error::Error for Failure {}
+
+impl From<Failure> for io::Error {
+    fn from(failure: Failure) -> Self {
+        io::Error::other(failure)
+    }
 }
 
 pub(super) fn file_failure(error: io::Error, path: &[u8]) -> Failure {
@@ -151,6 +199,8 @@ impl<'a, W: Write> Session<'a, W> {
                 value["kind"] = json!("done");
                 protocol::write_data(session.output, value.to_string().as_bytes())?;
             }
+            // Once stdin has closed nobody reads the result, whatever the failure was.
+            Err(_) if session.lifeline.aborted() => return Ok(()),
             Err(Failure::Aborted) => return Ok(()),
             Err(failure) => write_failure(session.output, failure)?,
         }
@@ -228,27 +278,17 @@ fn backup<W: Write>(
         PART_SIZE,
         transfer::parallelism(),
     );
-    let failures = sink.failures();
-    let sink_failure = |error: io::Error| {
-        if lifeline.aborted() {
-            Failure::Aborted
-        } else if let Some(failure) = failures.take() {
-            failure
-        } else {
-            Failure::Transfer(format!("writing the archive failed: {error}"))
-        }
-    };
     let mut encoder =
-        zstd::stream::write::Encoder::new(sink, COMPRESSION_LEVEL).map_err(sink_failure)?;
+        zstd::stream::write::Encoder::new(sink, COMPRESSION_LEVEL).map_err(Failure::writing)?;
     let cpus = std::thread::available_parallelism().map_or(1, usize::from);
     if cpus > 1 {
         encoder
             .multithread(u32::try_from(cpus).unwrap_or(u32::MAX))
-            .map_err(sink_failure)?;
+            .map_err(Failure::writing)?;
     }
     let aborted = || lifeline.aborted();
-    let encoder = capture::capture(&root, &selection, encoder, &aborted, &sink_failure)?;
-    let uploaded = encoder.finish().map_err(sink_failure)?.finish()?;
+    let encoder = capture::capture(&root, &selection, encoder, &aborted)?;
+    let uploaded = encoder.finish().map_err(Failure::writing)?.finish()?;
     Ok(json!({
         "size": uploaded.size,
         "sha256": uploaded.sha256,
@@ -326,19 +366,9 @@ fn restore<W: Write>(
         PART_SIZE as u64,
         transfer::parallelism(),
     );
-    let failures = ranges.failures();
-    let read_failure = |error: io::Error| {
-        if lifeline.aborted() {
-            Failure::Aborted
-        } else if let Some(failure) = failures.take() {
-            failure
-        } else {
-            Failure::Integrity(format!("the backup is corrupt: {error}"))
-        }
-    };
     let aborted = || lifeline.aborted();
-    let mut decoder = zstd::stream::read::Decoder::new(ranges).map_err(read_failure)?;
-    let mut extractor = Extractor::new(sibling_fd, &aborted, &read_failure)?;
+    let mut decoder = zstd::stream::read::Decoder::new(ranges).map_err(Failure::reading)?;
+    let mut extractor = Extractor::new(sibling_fd, &aborted)?;
     extractor.extract(&mut decoder)?;
 
     // Only the tar format's end padding may follow the end marker.
@@ -346,7 +376,7 @@ fn restore<W: Write>(
         &mut (&mut decoder).take(MAX_TRAILING_BYTES + 1),
         &mut io::sink(),
     )
-    .map_err(read_failure)?;
+    .map_err(Failure::reading)?;
     if trailing > MAX_TRAILING_BYTES {
         return Err(Failure::Integrity("the archive has trailing data".into()));
     }

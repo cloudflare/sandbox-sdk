@@ -347,16 +347,6 @@ pub(super) struct Uploaded {
 type PartSender = SyncSender<(u32, Vec<u8>)>;
 type PartReceiver = Arc<Mutex<Receiver<(u32, Vec<u8>)>>>;
 
-/// Takes the failure a background transfer recorded, so it can replace the generic I/O error
-/// that reached the reader or writer.
-pub(super) struct Failures(Box<dyn Fn() -> Option<Failure> + Send + Sync>);
-
-impl Failures {
-    pub(super) fn take(&self) -> Option<Failure> {
-        (self.0)()
-    }
-}
-
 /// Cuts the compressed stream into fixed-size parts, hashes it, and uploads parts in parallel.
 pub(super) struct PartSink {
     part_size: usize,
@@ -439,9 +429,16 @@ impl PartSink {
             .as_ref()
             .is_some_and(|sender| sender.send((number, body)).is_ok());
         if !sent || self.shared.failed.load(Ordering::SeqCst) {
-            return Err(io::Error::other("part upload failed"));
+            return Err(self.upload_error());
         }
         Ok(())
+    }
+
+    /// What a write returns once an upload has failed: that upload's failure, if it recorded one.
+    fn upload_error(&self) -> io::Error {
+        lock(&self.shared.failure)
+            .clone()
+            .map_or_else(|| io::Error::other("part upload failed"), io::Error::from)
     }
 
     /// Sends the last part, waits for every upload, and returns what the Durable Object needs to
@@ -459,7 +456,7 @@ impl PartSink {
         if let Some(failure) = lock(&self.shared.failure).take() {
             return Err(failure);
         }
-        flushed.map_err(|error| Failure::Transfer(error.to_string()))?;
+        flushed.map_err(Failure::writing)?;
         let mut parts = std::mem::take(&mut *lock(&self.shared.parts));
         parts.sort_by_key(|part| part.part_number);
         Ok(Uploaded {
@@ -468,18 +465,12 @@ impl PartSink {
             parts,
         })
     }
-
-    /// A handle to the failure that makes writes fail, if an upload causes it.
-    pub(super) fn failures(&self) -> Failures {
-        let shared = Arc::clone(&self.shared);
-        Failures(Box::new(move || lock(&shared.failure).take()))
-    }
 }
 
 impl Write for PartSink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.shared.failed.load(Ordering::SeqCst) {
-            return Err(io::Error::other("part upload failed"));
+            return Err(self.upload_error());
         }
         let count = bytes.len().min(self.part_size - self.buffer.len());
         self.buffer.extend_from_slice(&bytes[..count]);
@@ -607,12 +598,6 @@ impl RangeReader {
         }
     }
 
-    /// A handle to the failure that ends the stream early, if a range causes it.
-    pub(super) fn failures(&self) -> Failures {
-        let shared = Arc::clone(&self.shared);
-        Failures(Box::new(move || lock(&shared.state).failure.take()))
-    }
-
     /// Returns the byte count and SHA-256 of everything read so far.
     pub(super) fn digest(&self) -> (u64, String) {
         (self.count, hex(&self.hasher.clone().finalize()))
@@ -631,8 +616,8 @@ impl Read for RangeReader {
             }
             let mut state = lock(&self.shared.state);
             loop {
-                if state.failure.is_some() {
-                    return Err(io::Error::other("range download failed"));
+                if let Some(failure) = &state.failure {
+                    return Err(failure.clone().into());
                 }
                 if let Some(bytes) = state.ready.remove(&self.next_index) {
                     self.current = bytes;
@@ -733,10 +718,12 @@ mod tests {
     fn a_failed_part_fails_later_writes_and_the_upload() {
         let mut sink = PartSink::new(|_, _| Err(Failure::Transfer("rejected".into())), 2, 1);
 
-        let written = sink.write_all(b"abcdefghij");
+        let written = sink.write_all(b"abcdefghij").unwrap_err();
         let finished = sink.finish();
 
-        assert!(written.is_err());
+        assert!(
+            matches!(Failure::writing(written), Failure::Transfer(detail) if detail == "rejected")
+        );
         assert!(matches!(finished, Err(Failure::Transfer(detail)) if detail == "rejected"));
     }
 
@@ -782,11 +769,7 @@ mod tests {
             2,
         );
 
-        let mut bytes = Vec::new();
-        assert!(reader.read_to_end(&mut bytes).is_err());
-        assert!(matches!(
-            reader.failures().take(),
-            Some(Failure::NotFound(_))
-        ));
+        let error = reader.read_to_end(&mut Vec::new()).unwrap_err();
+        assert!(matches!(Failure::reading(error), Failure::NotFound(_)));
     }
 }

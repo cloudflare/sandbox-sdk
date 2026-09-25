@@ -1,8 +1,8 @@
-//! Capture and extraction together, without transport.
+//! Capture and extraction together without transport, and how failures cross zstd.
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -10,23 +10,20 @@ use std::path::{Path, PathBuf};
 
 use super::capture::{Selection, capture};
 use super::extract::Extractor;
+use super::transfer::{PartSink, RangeReader};
 use super::{Failure, sys};
 use crate::test_support::TempDir;
 
 fn archive(root: &Path, exclude: &[&str], gitignore: bool) -> Vec<u8> {
     let exclude: Vec<String> = exclude.iter().map(|pattern| pattern.to_string()).collect();
     let selection = Selection::new(root, &exclude, gitignore).unwrap();
-    capture(root, &selection, Vec::new(), &|| false, &|error| {
-        panic!("writing to a Vec failed: {error}")
-    })
-    .unwrap()
+    capture(root, &selection, Vec::new(), &|| false).unwrap()
 }
 
 fn extract(archive: &[u8], destination: &Path) -> Result<(), Failure> {
     fs::create_dir(destination).unwrap();
     let fd = sys::open_directory(destination.as_os_str()).unwrap();
-    let read_failure = |error: io::Error| Failure::Integrity(error.to_string());
-    let mut extractor = Extractor::new(fd, &|| false, &read_failure)?;
+    let mut extractor = Extractor::new(fd, &|| false)?;
     extractor.extract(&mut &archive[..])?;
     extractor.finish()
 }
@@ -367,4 +364,31 @@ fn truncated_archives_fail() {
 fn set_mtime(path: &Path, mtime: (i64, u32)) {
     let fd = fs::File::open(path).unwrap();
     sys::set_mtime_fd(fd.as_raw_fd(), mtime).unwrap();
+}
+
+// The package tells a rejected part from a failed compression by the failure the part carries.
+#[test]
+fn a_rejected_part_reaches_the_caller_through_zstd() {
+    let sink = PartSink::new(|_, _| Err(Failure::Transfer("rejected".into())), 64, 1);
+    let mut encoder = zstd::stream::write::Encoder::new(sink, 1).unwrap();
+    let noise: Vec<u8> = (0..1_000_000u32)
+        .map(|index| (index.wrapping_mul(2_654_435_761) >> 24) as u8)
+        .collect();
+
+    let error = encoder
+        .write_all(&noise)
+        .and_then(|()| encoder.finish().map(drop))
+        .unwrap_err();
+
+    assert!(matches!(Failure::writing(error), Failure::Transfer(detail) if detail == "rejected"));
+}
+
+#[test]
+fn a_missing_object_reaches_the_caller_through_zstd() {
+    let ranges = RangeReader::new(|_, _| Err(Failure::NotFound("gone".into())), 100, 10, 2);
+    let mut decoder = zstd::stream::read::Decoder::new(ranges).unwrap();
+
+    let error = decoder.read_to_end(&mut Vec::new()).unwrap_err();
+
+    assert!(matches!(Failure::reading(error), Failure::NotFound(_)));
 }

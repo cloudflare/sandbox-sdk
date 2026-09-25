@@ -1,7 +1,6 @@
 //! Writes one directory as a PAX tar stream: the live tree, without following symlinks or
 //! crossing mounts, filtered by gitignore-style patterns.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -9,7 +8,6 @@ use std::io::{self, Read, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -74,15 +72,13 @@ fn matcher(root: &Path, file: &Path) -> Option<Gitignore> {
     builder.build().ok()
 }
 
-/// Writes `root` into `output` as a tar stream and returns `output`.
-///
-/// `sink_failure` explains an error writing to `output`. Reading the tree reports file errors.
+/// Writes `root` into `output` as a tar stream and returns `output`. A file that can't be read
+/// fails with its own file error, not as a failure writing the archive.
 pub(super) fn capture<W: Write>(
     root: &Path,
     selection: &Selection,
     output: W,
     aborted: &dyn Fn() -> bool,
-    sink_failure: &dyn Fn(io::Error) -> Failure,
 ) -> Result<W, Failure> {
     let status = sys::lstatx(root.as_os_str())
         .map_err(|error| file_failure(error, root.as_os_str().as_bytes()))?;
@@ -97,13 +93,11 @@ pub(super) fn capture<W: Write>(
         selection,
         root_mount: status.mount,
         links: HashMap::new(),
-        source_error: Rc::default(),
         aborted,
-        sink_failure,
     };
     walk.emit(b"./", &status, Kind::Directory, &mut io::empty())?;
     walk.directory(root.to_path_buf(), Vec::new(), &mut Vec::new())?;
-    walk.builder.into_inner().map_err(sink_failure)
+    walk.builder.into_inner().map_err(Failure::writing)
 }
 
 enum Kind<'a> {
@@ -118,11 +112,7 @@ struct Walk<'a, W: Write> {
     selection: &'a Selection,
     root_mount: (u32, u32, Option<u64>),
     links: HashMap<(u32, u32, u64), Vec<u8>>,
-    /// The error a source file returned, so it is reported as that file's error rather than as
-    /// a failure writing the archive.
-    source_error: Rc<RefCell<Option<Failure>>>,
     aborted: &'a dyn Fn() -> bool,
-    sink_failure: &'a dyn Fn(io::Error) -> Failure,
 }
 
 impl<W: Write> Walk<'_, W> {
@@ -225,7 +215,6 @@ impl<W: Write> Walk<'_, W> {
         let mut data = Source {
             file,
             path: path.as_os_str().as_bytes().to_vec(),
-            error: Rc::clone(&self.source_error),
         }
         .take(status.size)
         .chain(io::repeat(0))
@@ -287,10 +276,7 @@ impl<W: Write> Walk<'_, W> {
                 .append_pax_extensions(pax.iter().map(|(key, value)| (*key, value.as_slice())))
         }
         .and_then(|()| self.builder.append(&header, data));
-        written.map_err(|error| match self.source_error.borrow_mut().take() {
-            Some(failure) => failure,
-            None => (self.sink_failure)(error),
-        })
+        written.map_err(Failure::writing)
     }
 }
 
@@ -310,20 +296,17 @@ fn pax_time((seconds, nanoseconds): (i64, u32)) -> String {
     }
 }
 
+/// A file being archived. A failed read carries that file's error through tar.
 struct Source {
     file: File,
     path: Vec<u8>,
-    error: Rc<RefCell<Option<Failure>>>,
 }
 
 impl Read for Source {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        self.file.read(buffer).inspect_err(|error| {
-            let failure = file_failure(
-                io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EIO)),
-                &self.path,
-            );
-            *self.error.borrow_mut() = Some(failure);
+        self.file.read(buffer).map_err(|error| {
+            let errno = error.raw_os_error().unwrap_or(libc::EIO);
+            file_failure(io::Error::from_raw_os_error(errno), &self.path).into()
         })
     }
 }
@@ -331,6 +314,32 @@ impl Read for Source {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
+
+    #[test]
+    fn a_file_that_fails_to_read_fails_with_its_own_error_through_tar() {
+        let directory = TempDir::new();
+        // Reading a directory's descriptor fails with EISDIR.
+        let mut source = Source {
+            file: File::open(&directory.0).unwrap(),
+            path: b"unreadable".to_vec(),
+        };
+        let mut header = tar::Header::new_ustar();
+        header.set_size(1);
+        header.set_cksum();
+
+        let error = tar::Builder::new(Vec::new())
+            .append(&header, &mut source)
+            .unwrap_err();
+
+        assert!(matches!(
+            Failure::writing(error),
+            Failure::File {
+                errno: libc::EISDIR,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn formats_pax_times_as_signed_decimals() {

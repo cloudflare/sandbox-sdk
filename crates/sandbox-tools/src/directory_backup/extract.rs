@@ -38,17 +38,11 @@ pub(super) struct Extractor<'a> {
     unchecked_entries: u64,
     entries: u64,
     aborted: &'a dyn Fn() -> bool,
-    read_failure: &'a dyn Fn(io::Error) -> Failure,
 }
 
 impl<'a> Extractor<'a> {
-    /// `root` is the new, empty directory, opened for reading. `read_failure` explains an error
-    /// reading the archive.
-    pub(super) fn new(
-        root: OwnedFd,
-        aborted: &'a dyn Fn() -> bool,
-        read_failure: &'a dyn Fn(io::Error) -> Failure,
-    ) -> Result<Self, Failure> {
+    /// `root` is the new, empty directory, opened for reading.
+    pub(super) fn new(root: OwnedFd, aborted: &'a dyn Fn() -> bool) -> Result<Self, Failure> {
         let (_, total) = sys::free_space(root.as_raw_fd())
             .map_err(|error| file_failure(error, b"restore directory"))?;
         // Extraction is much faster without btrfs compression. Other filesystems refuse the flag,
@@ -66,17 +60,16 @@ impl<'a> Extractor<'a> {
             unchecked_entries: 0,
             entries: 0,
             aborted,
-            read_failure,
         })
     }
 
     /// Extracts every entry until the archive's end marker, leaving the rest of `input` unread.
     pub(super) fn extract(&mut self, input: &mut impl Read) -> Result<(), Failure> {
         let mut archive = tar::Archive::new(input);
-        let entries = archive.entries().map_err(self.read_failure)?.raw(true);
+        let entries = archive.entries().map_err(Failure::reading)?.raw(true);
         let mut pending = Pending::default();
         for entry in entries {
-            let mut entry = entry.map_err(self.read_failure)?;
+            let mut entry = entry.map_err(Failure::reading)?;
             if (self.aborted)() {
                 return Err(Failure::Aborted);
             }
@@ -92,7 +85,7 @@ impl<'a> Extractor<'a> {
                     return Err(Failure::Integrity("a PAX header is too large".into()));
                 }
                 let mut records = Vec::new();
-                entry.read_to_end(&mut records).map_err(self.read_failure)?;
+                entry.read_to_end(&mut records).map_err(Failure::reading)?;
                 pending = Pending::parse(&records)?;
                 continue;
             }
@@ -112,12 +105,12 @@ impl<'a> Extractor<'a> {
                 .or_else(|| entry.link_name_bytes().map(|link| link.into_owned()));
             let metadata = Metadata {
                 // setuid and setgid are never restored.
-                mode: header.mode().map_err(self.read_failure)? & 0o1777,
-                uid: u32::try_from(header.uid().map_err(self.read_failure)?).unwrap_or(u32::MAX),
-                gid: u32::try_from(header.gid().map_err(self.read_failure)?).unwrap_or(u32::MAX),
+                mode: header.mode().map_err(Failure::reading)? & 0o1777,
+                uid: u32::try_from(header.uid().map_err(Failure::reading)?).unwrap_or(u32::MAX),
+                gid: u32::try_from(header.gid().map_err(Failure::reading)?).unwrap_or(u32::MAX),
                 mtime: match extensions.mtime {
                     Some(mtime) => mtime,
-                    None => (header.mtime().map_err(self.read_failure)? as i64, 0),
+                    None => (header.mtime().map_err(Failure::reading)? as i64, 0),
                 },
             };
             let entry_path = components(&path)?;
@@ -187,9 +180,9 @@ impl<'a> Extractor<'a> {
         let mut remaining = size;
         while remaining > 0 {
             let limit = buffer.len().min(remaining as usize);
-            let count = data.read(&mut buffer[..limit]).map_err(self.read_failure)?;
+            let count = data.read(&mut buffer[..limit]).map_err(Failure::reading)?;
             if count == 0 {
-                return Err((self.read_failure)(io::ErrorKind::UnexpectedEof.into()));
+                return Err(Failure::reading(io::ErrorKind::UnexpectedEof.into()));
             }
             file.write_all(&buffer[..count])
                 .map_err(|error| self.write_failure(error, path))?;
