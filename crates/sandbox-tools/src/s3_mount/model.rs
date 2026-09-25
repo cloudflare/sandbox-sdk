@@ -7,7 +7,7 @@ pub(super) const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
 
 const RESERVED_GUEST_PATHS: [&str; 3] =
     [MOUNTINFO_PATH, CONTROL_ROOT, "/usr/local/bin/sandbox-shim"];
-const RESERVED_S3FS_OPTIONS: [&str; 27] = [
+const RESERVED_S3FS_OPTIONS: [&str; 28] = [
     "ahbe_conf",
     "allow_other",
     "compat_dir",
@@ -22,6 +22,7 @@ const RESERVED_S3FS_OPTIONS: [&str; 27] = [
     "iam_role",
     "ibm_iam_auth",
     "logfile",
+    "nomixupload",
     "noproxy",
     "passwd_file",
     "profile",
@@ -354,6 +355,10 @@ mod tests {
             name: "FsNaMe".into(),
             value: Some("other".into()),
         };
+        let always_on = S3fsOption {
+            name: "nomixupload".into(),
+            value: None,
+        };
 
         assert!(matches!(
             validate_s3fs_option(&injected),
@@ -361,6 +366,10 @@ mod tests {
         ));
         assert!(matches!(
             validate_s3fs_option(&reserved),
+            Err(ControlError::Protocol(_))
+        ));
+        assert!(matches!(
+            validate_s3fs_option(&always_on),
             Err(ControlError::Protocol(_))
         ));
     }

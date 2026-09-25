@@ -44,7 +44,7 @@ const configuration: S3MountObservedConfiguration = {
   },
   keyPrefix: "current/",
   access: "read-write",
-  s3fsOptions: [{ name: "max_stat_cache_size", value: "1000" }, { name: "nomixupload" }],
+  s3fsOptions: [{ name: "max_stat_cache_size", value: "1000" }, { name: "noxmlns" }],
 };
 
 const request: S3MountRequest = {
@@ -64,7 +64,7 @@ const request: S3MountRequest = {
   access: "read-write",
   s3fsOptions: {
     max_stat_cache_size: 1_000,
-    nomixupload: true,
+    noxmlns: true,
     no_check_certificate: false,
   },
 };
@@ -350,7 +350,7 @@ describe("S3Mounts", () => {
         bucket: "models-production",
       },
       access: "read-only",
-      s3fsOptions: [{ name: "nomixupload" }],
+      s3fsOptions: [{ name: "noxmlns" }],
     };
     const state = {
       kind: "stale",
@@ -500,6 +500,9 @@ describe("S3Mounts", () => {
     await expect(mounts.inspect("relative/path")).rejects.toBeInstanceOf(TypeError);
     await expect(
       mounts.mount({ ...request, s3fsOptions: { fsname: "other" } }),
+    ).rejects.toBeInstanceOf(TypeError);
+    await expect(
+      mounts.mount({ ...request, s3fsOptions: { nomixupload: false } }),
     ).rejects.toBeInstanceOf(TypeError);
     await expect(
       mounts.mount({ ...request, s3fsOptions: { custom: "value,url=http://other" } }),

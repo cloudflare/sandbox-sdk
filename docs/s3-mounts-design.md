@@ -71,6 +71,8 @@ These states also make `mount()` safe to call again from a new Durable Object in
 
 The gateway talks to S3-compatible endpoints only. R2 works through its S3 endpoint with R2 API tokens. Translating S3 requests to an R2 binding would make the gateway a partial S3 server with its own semantics to verify, so that path is not built.
 
+The shim always starts `s3fs` with `nomixupload`, and applications cannot set or unset it. When a command rewrites part of a large object, `s3fs` would otherwise copy the unchanged ranges as upload parts, so the parts differ in size. R2 rejects a multipart upload whose parts before the last differ in size (`InvalidPart`), and every S3-compatible provider accepts uniform parts. The cost is that such a rewrite uploads the whole object. Detecting R2 from the endpoint instead would put provider-specific behavior in a path that is otherwise provider-neutral.
+
 ## Versions
 
 The mount request, the marker file, and the gateway props each carry protocol version `1`. The shim refuses a request from another version as incompatible, and reports a marker from another version as the `incompatible` state. The gateway answers props from another version with a `gateway-protocol` result. This version is separate from the frame version in [Shim protocol](shim-protocol.md#versioning).

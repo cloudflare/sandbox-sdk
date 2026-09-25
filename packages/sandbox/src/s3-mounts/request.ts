@@ -37,6 +37,7 @@ const RESERVED_S3FS_OPTIONS = new Set([
   "iam_role",
   "ibm_iam_auth",
   "logfile",
+  "nomixupload",
   "noproxy",
   "passwd_file",
   "profile",

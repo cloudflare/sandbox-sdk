@@ -176,6 +176,8 @@ describeLifecycle("public S3 mount lifecycle", () => {
     } satisfies S3MountRequest;
 
     await mounts.mount(request);
+    // MinIO accepts mixed part sizes, so the partial rewrite below cannot catch a missing option.
+    expect(await container.shell("ps -o args= -C s3fs")).toContain("-o nomixupload");
     await container.shell("printf 'release-ready' > /mnt/models/ready.txt");
     expect(await container.shell("cat /mnt/models/ready.txt")).toBe("release-ready");
     await container.shell(

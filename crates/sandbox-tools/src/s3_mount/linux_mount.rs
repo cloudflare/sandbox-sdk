@@ -79,6 +79,10 @@ pub(super) fn start_s3fs(
         .arg(mount_path)
         .args(["-o", "use_path_request_style", "-o", "compat_dir"])
         .args(["-o", "allow_other"])
+        // R2 rejects multipart uploads whose non-final parts differ in size, which s3fs produces
+        // when it copies the unchanged ranges of a partly rewritten object. Every S3 provider
+        // accepts uniform parts, so the option is always on.
+        .args(["-o", "nomixupload"])
         .arg("-o")
         .arg(format!("passwd_file={}", password_path.display()))
         .arg("-o")
