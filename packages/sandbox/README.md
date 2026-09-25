@@ -88,7 +88,7 @@ Version 0.x provided a `Sandbox` class that owned the Container and ran commands
 | [`images/sandbox-tools`](images/sandbox-tools) | The `cloudflare/sandbox` image that ships `sandbox-shim`         |
 | [`examples`](examples)                         | Deployable Workers, one per goal                                 |
 
-To learn how these parts fit together, read [Architecture](docs/architecture.md). The package and `sandbox-shim` exchange frames described in [Shim protocol](docs/shim-protocol.md).
+To learn how these parts fit together, read [Architecture](docs/architecture.md). The package and `sandbox-shim` exchange frames described in [Shim protocol](docs/shim-protocol.md). [S3 mounts design](docs/s3-mounts-design.md) explains `S3Mounts` and `S3Gateway`.
 
 Build and test with Node.js and Docker:
 
