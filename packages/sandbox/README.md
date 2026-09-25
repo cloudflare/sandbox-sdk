@@ -88,6 +88,8 @@ Version 0.x provided a `Sandbox` class that owned the Container and ran commands
 | [`images/sandbox-tools`](images/sandbox-tools) | The `cloudflare/sandbox` image that ships `sandbox-shim`         |
 | [`examples`](examples)                         | Deployable Workers, one per goal                                 |
 
+To learn how these parts fit together, read [Architecture](docs/architecture.md).
+
 Build and test with Node.js and Docker:
 
 ```sh
