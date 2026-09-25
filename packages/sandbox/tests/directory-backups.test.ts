@@ -67,7 +67,12 @@ class ShimDouble {
 }
 
 function setup(
-  options: { afterAcknowledgement?: Uint8Array[]; first?: Uint8Array[]; stored?: number } = {},
+  options: {
+    afterAcknowledgement?: Uint8Array[];
+    first?: Uint8Array[];
+    /** The size R2 reports for the completed upload, or why completing it fails. */
+    stored?: number | Error;
+  } = {},
 ) {
   const log: string[] = [];
   const shim = new ShimDouble(log, options.afterAcknowledgement ?? [], options.first);
@@ -82,6 +87,7 @@ function setup(
       },
       async completeUpload(uploadId: string, parts: readonly { partNumber: number }[]) {
         log.push(`complete ${uploadId} ${parts.map((part) => part.partNumber).join(",")}`);
+        if (options.stored instanceof Error) throw options.stored;
         return options.stored ?? 10;
       },
       async abortUpload(uploadId: string) {
@@ -178,6 +184,14 @@ describe("DirectoryBackups.backup", () => {
 
     expect(SandboxBackupError.is(error) && error.code).toBe("BACKUP_INTEGRITY");
     expect(log.slice(-2)).toEqual(["complete upload-1 1", "delete"]);
+  });
+
+  it("aborts the upload when completing it fails", async () => {
+    const { log, backups } = setup({ afterAcknowledgement: done(), stored: new Error("R2 down") });
+
+    await expect(backups.backup({ dir: "/workspace" })).rejects.toThrow("R2 down");
+
+    expect(log.slice(-2)).toEqual(["complete upload-1 1", "abort upload-1"]);
   });
 
   it("aborts the upload when a part fails, after denying and closing stdin", async () => {

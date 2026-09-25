@@ -2,7 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import * as z from "zod/mini";
 
 import { type DirectoryBackupGatewayProps, type DirectoryBackupPart } from "./contracts.js";
-import { BackupControl, handleDirectoryBackupRequest } from "./gateway.js";
+import { handleDirectoryBackupRequest } from "./gateway.js";
 
 /**
  * Moves directory backups between a container and an R2 bucket binding. Export it from the
@@ -17,19 +17,38 @@ export class DirectoryBackupGateway extends WorkerEntrypoint<object, DirectoryBa
   }
 
   async createUpload(name?: string): Promise<string> {
-    return new BackupControl(this.ctx.props, this.#bucket).createUpload(name);
+    const { bucket, key } = this.#control();
+    const options: R2MultipartOptions = { httpMetadata: { contentType: "application/zstd" } };
+    if (name !== undefined) options.customMetadata = { name };
+    const upload = await bucket.createMultipartUpload(key, options);
+    return upload.uploadId;
   }
 
   async completeUpload(uploadId: string, parts: readonly DirectoryBackupPart[]): Promise<number> {
-    return new BackupControl(this.ctx.props, this.#bucket).completeUpload(uploadId, parts);
+    const { bucket, key } = this.#control();
+    const object = await bucket
+      .resumeMultipartUpload(key, uploadId)
+      .complete(parts.map(({ partNumber, etag }) => ({ partNumber, etag })));
+    return object.size;
   }
 
   async abortUpload(uploadId: string): Promise<void> {
-    return new BackupControl(this.ctx.props, this.#bucket).abortUpload(uploadId);
+    const { bucket, key } = this.#control();
+    await bucket.resumeMultipartUpload(key, uploadId).abort();
   }
 
   async deleteObject(): Promise<void> {
-    return new BackupControl(this.ctx.props, this.#bucket).deleteObject();
+    const { bucket, key } = this.#control();
+    await bucket.delete(key);
+  }
+
+  /** The bucket and key of a control call. Only the Durable Object holds control props. */
+  #control() {
+    const props = this.ctx.props;
+    if (props.protocolVersion !== 1 || props.mode !== "control") {
+      throw new Error("DirectoryBackupGateway control methods require control props");
+    }
+    return { bucket: this.#bucket(props.binding), key: props.key };
   }
 
   readonly #bucket = (binding: string): R2Bucket => {

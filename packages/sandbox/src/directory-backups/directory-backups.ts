@@ -8,6 +8,7 @@ import {
   type DirectoryBackupDeleteOptions,
   type DirectoryBackupGatewayBinding,
   type DirectoryBackupGatewayControl,
+  type DirectoryBackupGatewayProps,
   type DirectoryBackupOptions,
   type DirectoryBackupStorage,
   type DirectoryRestoreOptions,
@@ -103,58 +104,34 @@ export class DirectoryBackups {
     if (options.dir === undefined) throw new TypeError("dir must be an absolute path without NUL");
     const { dir, name, signal } = options;
     const id = crypto.randomUUID();
-    const key = this.#key(id);
-    const control = this.#control(key);
-    let uploadId: string | undefined;
+    const control = this.#control(this.#key(id));
+    const { uploadId, done } = await this.#upload(control, this.#key(id), options);
+
+    let size: number;
     try {
-      const done = await runShimExchange(this.#container, {
-        command: "backup",
-        request: {
-          gateway: GATEWAY_HOST,
-          dir,
-          exclude: [...(options.exclude ?? [])],
-          gitignore: options.gitignore ?? false,
-        },
-        path: dir,
-        signal,
-        done: backupDoneSchema,
-        grant: async () => {
-          uploadId = await control.createUpload(name);
-          await this.#register({
-            protocolVersion: 1,
-            mode: "write",
-            binding: this.#binding,
-            key,
-            uploadId,
-          });
-        },
-        deny: () => this.#deny(),
-      });
       signal?.throwIfAborted();
-      if (uploadId === undefined) throw new Error("upload was not created");
-      const size = await control.completeUpload(uploadId, done.parts);
-      uploadId = undefined;
-      if (size !== done.size) {
-        await control.deleteObject().catch(() => undefined);
-        throw backupError(
-          "BACKUP_INTEGRITY",
-          "backup",
-          dir,
-          `R2 stored ${size} bytes, but the container uploaded ${done.size}`,
-        );
-      }
-      const record = {
-        id,
-        dir,
-        size,
-        sha256: done.sha256,
-        format: DIRECTORY_BACKUP_FORMAT,
-      } satisfies DirectoryBackup;
-      return name === undefined ? record : { ...record, name };
+      size = await control.completeUpload(uploadId, done.parts);
     } catch (error) {
-      if (uploadId !== undefined) await control.abortUpload(uploadId).catch(() => undefined);
+      await control.abortUpload(uploadId).catch(() => undefined);
       throw error;
     }
+    if (size !== done.size) {
+      await control.deleteObject().catch(() => undefined);
+      throw backupError(
+        "BACKUP_INTEGRITY",
+        "backup",
+        dir,
+        `R2 stored ${size} bytes, but the container uploaded ${done.size}`,
+      );
+    }
+    const record = {
+      id,
+      dir,
+      size,
+      sha256: done.sha256,
+      format: DIRECTORY_BACKUP_FORMAT,
+    } satisfies DirectoryBackup;
+    return name === undefined ? record : { ...record, name };
   }
 
   /**
@@ -196,6 +173,50 @@ export class DirectoryBackups {
     await this.#control(this.#key(record.id)).deleteObject();
   }
 
+  /**
+   * Runs the shim's backup into a new multipart upload, which its grant creates once the shim
+   * holds the lock. Aborts the upload if the backup fails.
+   */
+  async #upload(
+    control: DirectoryBackupGatewayControl,
+    key: string,
+    options: DirectoryBackupOptions,
+  ): Promise<{ uploadId: string; done: z.infer<typeof backupDoneSchema> }> {
+    const { dir } = options;
+    let uploadId: string | undefined;
+    try {
+      const done = await runShimExchange(this.#container, {
+        command: "backup",
+        request: {
+          gateway: GATEWAY_HOST,
+          dir,
+          exclude: [...(options.exclude ?? [])],
+          gitignore: options.gitignore ?? false,
+        },
+        path: dir,
+        signal: options.signal,
+        done: backupDoneSchema,
+        grant: async () => {
+          uploadId = await control.createUpload(options.name);
+          await this.#register({
+            protocolVersion: 1,
+            mode: "write",
+            binding: this.#binding,
+            key,
+            uploadId,
+          });
+        },
+        deny: () => this.#deny(),
+      });
+      // The shim reports done only after the grant, which created the upload.
+      if (uploadId === undefined) throw new Error("the backup finished without an upload");
+      return { uploadId, done };
+    } catch (error) {
+      if (uploadId !== undefined) await control.abortUpload(uploadId).catch(() => undefined);
+      throw error;
+    }
+  }
+
   #key(id: string): string {
     return `${this.#prefix}${id}.tar.zst`;
   }
@@ -206,7 +227,7 @@ export class DirectoryBackups {
     });
   }
 
-  #register(props: Parameters<DirectoryBackupGatewayBinding>[0]["props"]): Promise<void> {
+  #register(props: DirectoryBackupGatewayProps): Promise<void> {
     return this.#container.interceptOutboundHttp(GATEWAY_HOST, this.#gateway({ props }));
   }
 
