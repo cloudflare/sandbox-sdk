@@ -4,6 +4,9 @@ import { z } from "zod";
 import type { CodingAgentEnv } from "./sandbox";
 
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// The prompt is one argument of the agent's command, and Linux rejects an argument of 128 KiB or
+// more, counting its terminating NUL byte.
+const MAX_PROMPT_BYTES = 128 * 1024 - 1;
 
 const repositoryRequestSchema = z.object({
   url: z.url({ protocol: /^https$/, hostname: /^github\.com$/ }),
@@ -44,6 +47,9 @@ export default {
       if (resource === "task" && request.method === "POST") {
         const prompt = await request.text();
         if (prompt.trim() === "") return new Response("Prompt is required", { status: 400 });
+        if (new TextEncoder().encode(prompt).byteLength > MAX_PROMPT_BYTES) {
+          return new Response("Prompt must be smaller than 128 KiB", { status: 413 });
+        }
         const started = await sandbox.startTask(sandboxName, prompt);
         if (started === "busy") return new Response("A task is already running", { status: 409 });
         return Response.json({ state: "running" }, { status: 202 });

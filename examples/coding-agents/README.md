@@ -56,7 +56,7 @@ curl --request POST "$WORKER_URL/sandboxes/agent-1/task" \
   --data 'Add a test for the parser.'
 ```
 
-The response is `202`. A second task while one runs returns `409`.
+The response is `202`. A second task while one runs returns `409`. The prompt is one argument of the agent's command, so a prompt of 128 KiB or more returns `413`.
 
 Poll the task:
 
