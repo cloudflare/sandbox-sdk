@@ -16,6 +16,4 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
-
-EXPOSE 8080
 CMD ["sleep", "infinity"]

@@ -7,5 +7,4 @@ WORKDIR /workspace/app
 COPY app/package.json app/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY app/ ./
-EXPOSE 5173
 CMD ["sleep", "infinity"]
