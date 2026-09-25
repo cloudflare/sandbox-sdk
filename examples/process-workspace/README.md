@@ -45,7 +45,7 @@ curl "$WORKER_URL/sandboxes/agent-1/processes/ticker/logs?stream=stderr"
 curl --no-buffer "$WORKER_URL/sandboxes/agent-1/processes/ticker/logs?follow"
 ```
 
-The followed stream ends when the process exits.
+The followed output is server-sent events. Each `data` field holds a JSON-encoded chunk of output, such as `data: "tick 1\n"`, so `EventSource` can read it. The stream ends when the process exits. A comment every 5 seconds finds a closed connection, so `tail` stops when the client leaves.
 
 Wait up to 5 seconds for the process to exit:
 

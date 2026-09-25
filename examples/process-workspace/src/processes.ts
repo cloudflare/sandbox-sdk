@@ -179,7 +179,7 @@ export class Processes {
     return this.#files.readFile(`${directory(id)}/${stream}.log`);
   }
 
-  // Streams the log from the start, and ends once the process exits.
+  // Streams the log from the start as server-sent events, and ends once the process exits.
   async followLog(id: string, stream: LogStream): Promise<Response | undefined> {
     const process = await this.get(id);
     if (process === undefined) return undefined;
@@ -189,8 +189,9 @@ export class Processes {
         ? ["tail", "-n", "+1", "-F", "--pid", String(process.status.pid), path]
         : ["cat", path];
     const output = await this.#container.exec(tail, { stderr: "ignore" });
-    // Other content types can arrive all at once when the stream ends.
-    return new Response(output.stdout, { headers: { "Content-Type": "text/event-stream" } });
+    return new Response(serverSentEvents(output), {
+      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+    });
   }
 
   async waitForLog(id: string, pattern: string, timeoutMs: number): Promise<WaitForLogResult> {
@@ -239,6 +240,44 @@ export class Processes {
       clearTimeout(timer);
     }
   }
+}
+
+// Sends each chunk of output as a data event holding JSON-encoded text. A disconnected client is
+// noticed only when a write fails, so a comment every 5 seconds finds it even when the log is
+// quiet, and tail -F stops instead of running until the process exits.
+function serverSentEvents(process: ExecProcess): ReadableStream<Uint8Array> {
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+  let exited = false;
+  const markExited = () => {
+    exited = true;
+  };
+  process.exitCode.then(markExited, markExited);
+  // Signalling a process that has exited logs an internal error.
+  const stop = () => {
+    if (!exited) process.kill();
+  };
+  writer.closed.catch(stop);
+  const heartbeat = setInterval(() => {
+    writer.write(encoder.encode(": keep-alive\n\n")).catch(() => {});
+  }, 5_000);
+
+  const pump = async () => {
+    try {
+      if (process.stdout === null) throw new Error("tail did not provide stdout");
+      for await (const text of process.stdout.pipeThrough(new TextDecoderStream())) {
+        await writer.write(encoder.encode(`data: ${JSON.stringify(text)}\n\n`));
+      }
+      await writer.close();
+    } catch {
+      stop();
+    } finally {
+      clearInterval(heartbeat);
+    }
+  };
+  void pump();
+  return readable;
 }
 
 function directory(id: string): string {
