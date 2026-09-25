@@ -213,8 +213,12 @@ export abstract class CodingAgentSandbox extends DurableObject<CodingAgentEnv> {
     if (pid === undefined) return { state: "none" };
     // kill is a shell builtin; slim images have no kill binary.
     const probe = await this.#run(["/bin/sh", "-c", 'kill -0 "$1"', "probe", pid.trim()], "/", {});
+    if (probe.exitCode === 0) return { state: "running" };
+    // The task can finish after the first read. Its wrapper writes the exit code before it exits.
+    const lateExitCode = await this.#readOptionalText(EXIT_CODE_PATH);
+    if (lateExitCode !== undefined) return this.outcome(Number.parseInt(lateExitCode, 10));
     // The process ended without recording an exit code, for example after a kill.
-    return probe.exitCode === 0 ? { state: "running" } : { state: "lost" };
+    return { state: "lost" };
   }
 
   async #readOptionalText(path: string): Promise<string | undefined> {
