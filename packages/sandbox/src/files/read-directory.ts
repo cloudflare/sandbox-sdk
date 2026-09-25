@@ -1,3 +1,4 @@
+import type { FileOperationOptions } from "./files.js";
 import { protocolError } from "../shared/errors.js";
 import { runFileCommand } from "./command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
@@ -11,10 +12,11 @@ export interface SandboxDirectoryEntry {
 export async function readDirectory(
   container: ContainerExecutor,
   path: string,
-  options: ContainerExecOptions,
+  options: FileOperationOptions,
 ): Promise<SandboxDirectoryEntry[]> {
   const payload = await runFileCommand(container, {
-    command: ["read-directory", path],
+    name: "read-directory",
+    paths: [path],
     options,
     error: { operation: "readDirectory", path },
     expected: "data",

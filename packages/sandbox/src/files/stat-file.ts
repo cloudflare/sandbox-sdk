@@ -1,3 +1,4 @@
+import type { FileOperationOptions } from "./files.js";
 import { protocolError } from "../shared/errors.js";
 import { runFileCommand } from "./command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
@@ -19,11 +20,12 @@ export interface SandboxFileStat {
 export async function statFile(
   container: ContainerExecutor,
   path: string,
-  options: ContainerExecOptions,
+  options: FileOperationOptions,
   operation: "stat" | "lstat",
 ): Promise<SandboxFileStat> {
   const payload = await runFileCommand(container, {
-    command: [operation, path],
+    name: operation,
+    paths: [path],
     options,
     error: { operation, path },
     expected: "data",

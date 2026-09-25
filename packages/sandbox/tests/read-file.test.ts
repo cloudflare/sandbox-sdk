@@ -14,7 +14,7 @@ import {
 } from "./helpers.js";
 
 describe("Files.readFile", () => {
-  it("returns raw bytes and forwards native options", async () => {
+  it("returns raw bytes, joins a relative path onto cwd, and forwards native options", async () => {
     const signal = new AbortController().signal;
     const data = new Uint8Array([1, 2, 3]);
     const process = readProcess(successFrame(), 0, readableChunks([data]));
@@ -28,9 +28,8 @@ describe("Files.readFile", () => {
 
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "read", "data.bin"],
+      ["/usr/local/bin/sandbox-shim", "read", "/workspace/data.bin"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",
@@ -136,7 +135,7 @@ describe("Files.readFile", () => {
     await expect(files.readFile(stringLike)).rejects.toThrow("path must be a string");
     // @ts-expect-error Runtime callers can cross the TypeScript interface.
     await expect(files.readFile("/file", { cwd: stringLike })).rejects.toThrow(
-      "cwd must be a string",
+      "cwd must be an absolute path",
     );
     await expect(files.readFile("relative.txt")).rejects.toThrow(
       "cwd is required when path is relative",
@@ -149,6 +148,44 @@ describe("Files.readFile", () => {
       "path cannot contain NUL characters",
     );
     expect(container.exec).not.toHaveBeenCalled();
+  });
+
+  it("validates options before launching exec", async () => {
+    const container = containerWith(readProcess([]));
+    const files = new Files(container);
+
+    // @ts-expect-error A 0.x caller can pass an option this method does not have.
+    await expect(files.readFile("/file", { recursive: true })).rejects.toThrow(
+      'unknown option "recursive"',
+    );
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(files.readFile("/file", { env: { HOME: "/root" } })).rejects.toThrow(
+      'unknown option "env"',
+    );
+    for (const user of ["1000", "root", "1000:", ":1000", "1000:1000:1000", " 1000:1000"]) {
+      await expect(files.readFile("/file", { user })).rejects.toThrow(
+        'user must be numeric user and group IDs, as "uid:gid"',
+      );
+    }
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(files.readFile("/file", { signal: {} })).rejects.toThrow(
+      "signal must be an AbortSignal",
+    );
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(files.readFile("/file", null)).rejects.toThrow("options must be an object");
+    expect(container.exec).not.toHaveBeenCalled();
+  });
+
+  it("accepts options that are present but undefined", async () => {
+    const container = containerWith(readProcess(successFrame()));
+
+    // @ts-expect-error Spreading options objects can leave undefined keys a method does not have.
+    await new Files(container).readFile("/file", { cwd: undefined, recursive: undefined });
+
+    expect(container.exec).toHaveBeenCalledWith(["/usr/local/bin/sandbox-shim", "read", "/file"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
   });
 
   it("rejects malformed control output", async () => {

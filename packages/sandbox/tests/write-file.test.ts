@@ -33,9 +33,8 @@ describe("Files.writeFile", () => {
     expect(written).toEqual([encoder.encode("hello")]);
     expect(process.kill).not.toHaveBeenCalled();
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "write", "data.bin"],
+      ["/usr/local/bin/sandbox-shim", "write", "/workspace/data.bin"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdin: "pipe",

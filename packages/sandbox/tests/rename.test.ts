@@ -4,7 +4,7 @@ import { Files } from "../src/files/files.js";
 import { commandProcess, containerWith, dataFrame, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("Files.rename", () => {
-  it("renames one path and forwards native options", async () => {
+  it("renames one path, joins relative paths onto cwd, and forwards native options", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
     const signal = new AbortController().signal;
 
@@ -15,9 +15,8 @@ describe("Files.rename", () => {
     });
 
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "rename", "source", "destination"],
+      ["/usr/local/bin/sandbox-shim", "rename", "/workspace/source", "/workspace/destination"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",

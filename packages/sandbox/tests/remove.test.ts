@@ -4,7 +4,7 @@ import { Files } from "../src/files/files.js";
 import { commandProcess, containerWith, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("Files.remove", () => {
-  it("removes one path and forwards native options", async () => {
+  it("removes one path, joins a relative path onto cwd, and forwards native options", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
     const signal = new AbortController().signal;
 
@@ -15,9 +15,8 @@ describe("Files.remove", () => {
     });
 
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "remove", "file.txt"],
+      ["/usr/local/bin/sandbox-shim", "remove", "/workspace/file.txt"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",
@@ -36,13 +35,22 @@ describe("Files.remove", () => {
     });
 
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "remove", "directory", "--recursive", "--force"],
+      ["/usr/local/bin/sandbox-shim", "remove", "/workspace/directory", "--recursive", "--force"],
       {
-        cwd: "/workspace",
         stdout: "pipe",
         stderr: "ignore",
       },
     );
+  });
+
+  it("rejects a non-boolean force flag", async () => {
+    const container = containerWith(commandProcess([SUCCESS_HEADER]));
+
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(new Files(container).remove("/a", { force: 1 })).rejects.toThrow(
+      "force must be a boolean",
+    );
+    expect(container.exec).not.toHaveBeenCalled();
   });
 
   it("maps native filesystem errors", async () => {

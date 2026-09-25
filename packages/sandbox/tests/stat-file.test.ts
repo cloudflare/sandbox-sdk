@@ -60,9 +60,8 @@ describe("Files stat operations", () => {
       changedAt: new Date(1_788_000_000_333),
     });
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "stat", "data.txt"],
+      ["/usr/local/bin/sandbox-shim", "stat", "/workspace/data.txt"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",

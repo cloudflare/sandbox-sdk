@@ -57,9 +57,8 @@ describe("Files.readDirectory", () => {
       { name: "current", type: "symlink" },
     ]);
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "read-directory", "workspace"],
+      ["/usr/local/bin/sandbox-shim", "read-directory", "/home/workspace"],
       {
-        cwd: "/home",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",

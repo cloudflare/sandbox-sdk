@@ -1,11 +1,11 @@
 import type { FileOperationOptions } from "./files.js";
+import { startFileCommand } from "./command.js";
 import { fileErrorFromErrno, protocolError } from "../shared/errors.js";
 import {
   type ContainerExecutor,
-  SHIM_PATH,
   type ShimControlFrame,
   ShimControl,
-  ShimSession,
+  type ShimSession,
 } from "../shared/shim.js";
 
 type FailureReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
@@ -29,12 +29,11 @@ export async function writeFile(
   let sourceReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   try {
-    session = await ShimSession.start(container, [SHIM_PATH, "write", path], {
-      ...options,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    session = await startFileCommand(
+      container,
+      { name: "write", paths: [path], options },
+      { stdin: "pipe", stdout: "pipe", stderr: "ignore" },
+    );
     control = session.openStdoutControl();
     input = session.openStdinWriter();
 

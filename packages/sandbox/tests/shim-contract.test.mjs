@@ -211,6 +211,50 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     }
   });
 
+  it("resolves relative paths against cwd for every file operation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const files = new Files(nativeContainer());
+      const cwd = { cwd: directory };
+
+      // `..` after a symlinked cwd leaves the link's target, as it does after entering cwd.
+      await nativeMkdir(join(directory, "real", "sub"), { recursive: true });
+      await writeFile(join(directory, "real", "x"), "physical");
+      await symlink(join(directory, "real", "sub"), join(directory, "link"));
+      const linked = await files.readFile("../x", { cwd: join(directory, "link") });
+      await expect(linked.text()).resolves.toBe("physical");
+
+      await files.writeFile("notes.txt", "relative", cwd);
+      await expect((await files.readFile("notes.txt", cwd)).text()).resolves.toBe("relative");
+      await expect(files.stat("notes.txt", cwd)).resolves.toMatchObject({ size: 8n });
+      await files.mkdir("nested", cwd);
+      await files.rename("notes.txt", "nested/notes.txt", cwd);
+      await expect(files.readDirectory("nested", cwd)).resolves.toEqual([
+        { name: "notes.txt", type: "file" },
+      ]);
+      await files.remove("nested", { ...cwd, recursive: true });
+      await expect(files.lstat("nested", cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing cwd as a file error for the path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const files = new Files(nativeContainer());
+      const missing = { cwd: join(directory, "missing") };
+      const expected = { name: "SandboxFileError", code: "ENOENT", path: "notes.txt" };
+
+      await expect(files.readFile("notes.txt", missing)).rejects.toMatchObject(expected);
+      await expect(files.writeFile("notes.txt", "x", missing)).rejects.toMatchObject(expected);
+      await expect(files.stat("notes.txt", missing)).rejects.toMatchObject(expected);
+      await expect(files.stat(directory, missing)).resolves.toMatchObject({ type: "directory" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reports and unmounts an absent S3 mount idempotently", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {

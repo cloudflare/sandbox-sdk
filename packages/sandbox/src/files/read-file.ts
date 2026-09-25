@@ -1,11 +1,11 @@
 import type { FileOperationOptions } from "./files.js";
+import { startFileCommand } from "./command.js";
 import { fileErrorFromErrno, protocolError } from "../shared/errors.js";
 import {
   type ContainerExecutor,
-  SHIM_PATH,
   ShimControl,
   type ShimControlFrame,
-  ShimSession,
+  type ShimSession,
 } from "../shared/shim.js";
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
@@ -15,11 +15,11 @@ export async function readFile(
   path: string,
   options: FileOperationOptions,
 ): Promise<Response> {
-  const session = await ShimSession.start(container, [SHIM_PATH, "read", path], {
-    ...options,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const session = await startFileCommand(
+    container,
+    { name: "read", paths: [path], options },
+    { stdout: "pipe", stderr: "pipe" },
+  );
   let control: ShimControl | undefined;
   let output: ReadableStreamDefaultReader<Uint8Array> | undefined;
 

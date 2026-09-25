@@ -33,7 +33,7 @@ The shim uses the path it receives as it is. It does not normalize paths, follow
 
 The Worker side does only what the shim cannot:
 
-- Checks that the path is a non-empty string without NUL, and that a relative path comes with an absolute `cwd`.
+- Checks that the path is a non-empty string without NUL, and that a relative path comes with an absolute `cwd`, which it joins onto the path.
 - Moves bytes with Web Streams, so reads and writes apply backpressure end to end.
 - Maps the caller's `AbortSignal` to the `exec()` signal, which kills the process.
 - Decodes frames, and turns a numeric errno into a `SandboxFileError` with a symbolic `code`.

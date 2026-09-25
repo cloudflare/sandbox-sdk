@@ -36,7 +36,7 @@ The package turns a file error into `SandboxFileError`, and anything malformed i
 | `remove`        | `remove <PATH> [--recursive] [--force]`         | Not used                            | One control frame    | Ignored        |
 | `S3Mounts`      | `s3-mount <mount\|inspect\|unmount> <ARGUMENT>` | One byte, for `mount` and `unmount` | JSON in data frames  | Ignored        |
 
-Relative paths resolve against the `cwd` that the package passes to `exec()`. The shim does not change the path.
+The package sends only absolute paths. It joins a relative path onto the caller's `cwd`, and does not pass `cwd` to `exec()`. Linux resolves the joined path the same way as a relative path after entering `cwd`, including `..` after a symlink, and a missing `cwd` fails the operation with `ENOENT` for the path. A missing `cwd` given to `exec()` would instead fail to start the process, which looks the same as a missing shim binary. The shim does not change the path.
 
 When the arguments are wrong, the shim writes `sandbox-shim: <message>` to stderr and exits with code `1` without sending a frame. The package then reports a protocol error: invalid magic for a read, whose stderr carries frames, or truncated control data for the other commands.
 
@@ -121,7 +121,7 @@ Application images copy the shim from a donor image whose tag matches the packag
 ## Add a file operation
 
 1. Add a module under `crates/sandbox-tools/src/files/`, dispatch to it in `files/mod.rs`, and send frames with the helpers in `protocol.rs`. Add Rust unit tests next to it.
-2. Add the method to `Files` in `packages/sandbox/src/files/files.ts`. Call `validatePath()` for each path. Use `runFileCommand()` when the operation sends one frame, and add a decoder when it sends data.
+2. Add the method to `Files` in `packages/sandbox/src/files/files.ts`. Call `validateOptions()` with the option rules the method accepts, then `validatePath()` for each path. Start the shim with `runFileCommand()` when the operation sends one frame, or with `startFileCommand()` when it streams, and add a decoder when it sends data. Both join relative paths onto `cwd` and pass `exec()` only `user` and `signal`.
 3. Add the operation name to `FILE_OPERATIONS` in `packages/sandbox/src/shared/errors.ts`. If the operation takes a second path, add it to `FileErrorContext`, as `rename` does.
 4. Add package tests that feed frames from `packages/sandbox/tests/helpers.ts`, a case in `packages/sandbox/tests/shim-contract.test.mjs`, which runs the package against the compiled shim, and a subprocess test in `crates/sandbox-tools/tests/shim.rs` if the command needs one.
 5. Export any new public types from `packages/sandbox/src/index.ts`.

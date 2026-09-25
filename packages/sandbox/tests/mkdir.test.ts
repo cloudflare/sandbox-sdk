@@ -4,7 +4,7 @@ import { Files } from "../src/files/files.js";
 import { commandProcess, containerWith, dataFrame, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("Files.mkdir", () => {
-  it("creates one directory and forwards native options", async () => {
+  it("creates one directory, joins a relative path onto cwd, and forwards native options", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
     const signal = new AbortController().signal;
 
@@ -15,9 +15,8 @@ describe("Files.mkdir", () => {
     });
 
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "mkdir", "created"],
+      ["/usr/local/bin/sandbox-shim", "mkdir", "/workspace/created"],
       {
-        cwd: "/workspace",
         user: "1000:1000",
         signal: expect.any(AbortSignal),
         stdout: "pipe",
@@ -35,13 +34,22 @@ describe("Files.mkdir", () => {
     });
 
     expect(container.exec).toHaveBeenCalledWith(
-      ["/usr/local/bin/sandbox-shim", "mkdir", "parent/child", "--recursive"],
+      ["/usr/local/bin/sandbox-shim", "mkdir", "/workspace/parent/child", "--recursive"],
       {
-        cwd: "/workspace",
         stdout: "pipe",
         stderr: "ignore",
       },
     );
+  });
+
+  it("rejects a non-boolean recursive flag", async () => {
+    const container = containerWith(commandProcess([SUCCESS_HEADER]));
+
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(new Files(container).mkdir("/a", { recursive: "yes" })).rejects.toThrow(
+      "recursive must be a boolean",
+    );
+    expect(container.exec).not.toHaveBeenCalled();
   });
 
   it("maps native filesystem errors", async () => {
