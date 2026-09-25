@@ -2,7 +2,6 @@ export type {
   DirectoryBackup,
   DirectoryBackupDeleteOptions,
   DirectoryBackupGatewayBinding,
-  DirectoryBackupGatewayProps,
   DirectoryBackupOptions,
   DirectoryBackupStorage,
   DirectoryRestoreOptions,

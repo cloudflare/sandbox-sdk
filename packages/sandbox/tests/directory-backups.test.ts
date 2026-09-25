@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   type DirectoryBackup,
   type DirectoryBackupGatewayBinding,
-  type DirectoryBackupGatewayProps,
   DirectoryBackups,
   SandboxBackupError,
   SandboxFileError,
   SandboxProtocolError,
 } from "../src/index.js";
+import type { DirectoryBackupGatewayProps } from "../src/directory-backups/contracts.js";
 import { dataFrame, deferred, encoder, errorFrame } from "./helpers.js";
 import { TestFetcher } from "./worker-test-doubles.js";
 
