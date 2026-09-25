@@ -98,11 +98,7 @@ npm run check
 npm test
 ```
 
-If your network inspects TLS, set `SANDBOX_EXTRA_CA` to a CA bundle that trusts it. Image builds pass the bundle as a build secret, so it never enters an image.
-
-```sh
-export SANDBOX_EXTRA_CA=/etc/ssl/certs/ca-certificates.crt
-```
+[Testing](docs/testing.md) explains what these commands check, how to build behind a TLS-inspecting proxy, and how to test in production.
 
 ## License
 
