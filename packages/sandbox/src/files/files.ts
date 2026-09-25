@@ -7,6 +7,7 @@ import {
   type SandboxDirectoryEntry,
 } from "./read-directory.js";
 import { readFile as readContainerFile } from "./read-file.js";
+import { type OptionRule, type OptionRules, validateOptions } from "../shared/options.js";
 import type { ContainerExecutor } from "../shared/shim.js";
 import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
@@ -31,15 +32,6 @@ export type MkdirOptions = FileOperationOptions & {
   recursive?: boolean;
 };
 
-/** How one option is checked, and what the `TypeError` says after the option's name. */
-interface OptionRule {
-  readonly schema: z.ZodMiniType;
-  readonly requirement: string;
-}
-
-/** One rule for every option of `T`, so an option added to the type must also be checked. */
-type OptionRules<T> = { readonly [Name in keyof Required<T>]: OptionRule };
-
 const FLAG: OptionRule = { schema: z.boolean(), requirement: "must be a boolean" };
 
 const FILE_OPTIONS = {
@@ -58,8 +50,6 @@ const REMOVE_OPTIONS = {
   recursive: FLAG,
   force: FLAG,
 } satisfies OptionRules<RemoveOptions>;
-
-const optionsSchema = z.object({});
 
 /**
  * Structured file operations for a sandbox workspace.
@@ -252,26 +242,6 @@ export class Files {
       error: { operation: "remove", path },
       expected: "success",
     });
-  }
-}
-
-// Options set to undefined are ignored, so spreading a wider options object stays valid.
-function validateOptions(
-  options: FileOperationOptions,
-  rules: Readonly<Record<string, OptionRule>>,
-): void {
-  if (!optionsSchema.safeParse(options).success) {
-    throw new TypeError("options must be an object");
-  }
-  for (const [name, value] of Object.entries(options)) {
-    if (value === undefined) continue;
-    if (!Object.hasOwn(rules, name)) {
-      throw new TypeError(`unknown option "${name}"`);
-    }
-    const rule = rules[name];
-    if (!rule.schema.safeParse(value).success) {
-      throw new TypeError(`${name} ${rule.requirement}`);
-    }
   }
 }
 
