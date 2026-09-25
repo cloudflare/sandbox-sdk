@@ -2,7 +2,7 @@
   "name": "sandbox-backup-workspace-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-15",
-  // Files resolves native Linux errno names through node:os.
+  // Errors name native Linux errno codes, which the package resolves through node:os.
   "compatibility_flags": ["nodejs_compat"],
   "r2_buckets": [
     {

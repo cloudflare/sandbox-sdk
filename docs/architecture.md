@@ -6,10 +6,11 @@ This page explains how the repository is put together and why. It is for people 
 
 An application defines a Durable Object class with a container. Each sandbox name maps to one Durable Object, and that Durable Object starts, stops, and snapshots its container through `this.ctx.container`. The platform already provides commands (`exec()`), ports (`getTcpPort()`), outbound interception, snapshots, and inactivity timeouts.
 
-`@cloudflare/sandbox` adds two things that the platform does not provide:
+`@cloudflare/sandbox` adds three things that the platform does not provide:
 
 - `Files`, structured file operations with Linux errors.
 - `S3Mounts` and `S3Gateway`, S3 buckets mounted as directories, with credentials that stay in the Worker.
+- `DirectoryBackups` and `DirectoryBackupGateway`, a directory saved to R2 and restored into any Container, including one on a newer image.
 
 Everything else is application code. The package does not start, stop, wake, or destroy containers, and it has no `Sandbox` base class for applications to extend.
 
@@ -46,7 +47,7 @@ There are three kinds of failure, and each keeps its identity:
 - A malformed or unexpected exchange with the shim becomes `SandboxProtocolError`. Examples are the wrong magic bytes, an unsupported protocol version, truncated frames, or a nonzero exit after a success frame.
 - Everything else passes through unchanged: `exec()` failures, transport failures, a failing source stream in `writeFile()`, and the abort reason when a signal fires.
 
-The error values are plain `Error` objects with their fields as own properties. The package exports recognizers (`SandboxFileError.is()`, `SandboxProtocolError.is()`, `SandboxS3MountError.is()`) instead of classes, because an error that crosses Durable Object RPC loses its prototype and `instanceof` stops working. The recognizers check the name and the own properties, which survive RPC.
+The error values are plain `Error` objects with their fields as own properties. The package exports recognizers (`SandboxFileError.is()`, `SandboxProtocolError.is()`, `SandboxS3MountError.is()`, `SandboxBackupError.is()`) instead of classes, because an error that crosses Durable Object RPC loses its prototype and `instanceof` stops working. The recognizers check the name and the own properties, which survive RPC.
 
 ## What stays out of the package
 
@@ -65,6 +66,8 @@ A new export has to pass two tests:
 - The publication test: its contract can be frozen without freezing application policy.
 
 `S3Mounts` passes both. It hides FUSE setup, per-mount outbound routes, request signing, operation-level authorization, and recovery of mounts that outlive a Durable Object instance.
+
+`DirectoryBackups` passes both too. It hides a streaming archive format, parallel multipart transfer that never lands on the Container's disk, a per-operation R2 grant, verified extraction beside the target, and an atomic swap. The records are plain data, so storing and expiring them stays with the application.
 
 Several candidates failed and became examples or platform requests instead:
 

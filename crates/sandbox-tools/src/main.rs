@@ -1,4 +1,6 @@
+mod directory_backup;
 mod files;
+mod http;
 mod protocol;
 mod s3_mount;
 #[cfg(test)]
@@ -8,9 +10,10 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 
 fn main() {
+    // Stdin stays unlocked: a directory backup reads it on another thread.
     if let Err(error) = run(
         std::env::args_os().skip(1),
-        io::stdin().lock(),
+        io::stdin(),
         io::stdout().lock(),
         io::stderr().lock(),
     ) {
@@ -21,7 +24,7 @@ fn main() {
 
 fn run(
     mut args: impl Iterator<Item = OsString>,
-    mut input: impl Read,
+    mut input: impl Read + Send + 'static,
     mut stdout: impl Write,
     mut stderr: impl Write,
 ) -> Result<(), String> {
@@ -39,6 +42,10 @@ fn run(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             s3_mount::run(&arguments, &mut input, &mut stdout).map_err(|error| error.to_string())
+        }
+        Some("directory-backup") => {
+            let arguments: Vec<OsString> = args.collect();
+            directory_backup::run(&arguments, input, &mut stdout).map_err(|error| error.to_string())
         }
         Some(command) => files::run(command, args, input, &mut stdout, &mut stderr),
         None => Err("unknown command".into()),

@@ -7,10 +7,11 @@
 
 Run untrusted or generated code in a Linux sandbox that belongs to one user, task, or session. Your Worker decides who gets a sandbox, which hosts it can reach, and which credentials stay out of it.
 
-A sandbox is a Durable Object and the [Container](https://developers.cloudflare.com/containers/) it starts. The Durable Object starts the instance and runs commands with the Container API on `this.ctx.container`. `@cloudflare/sandbox` adds two things that API does not have:
+A sandbox is a Durable Object and the [Container](https://developers.cloudflare.com/containers/) it starts. The Durable Object starts the instance and runs commands with the Container API on `this.ctx.container`. `@cloudflare/sandbox` adds three things that API does not have:
 
 - [`Files`](https://developers.cloudflare.com/sandbox/reference/files/) streams files in and out of the running instance and reports Linux errors such as `ENOENT`.
 - [`S3Mounts`](https://developers.cloudflare.com/sandbox/reference/s3-mounts/) mounts an S3-compatible bucket at a path. Your Worker signs each storage request, so the credentials never enter the sandbox.
+- [`DirectoryBackups`](https://developers.cloudflare.com/sandbox/reference/directory-backups/) saves a directory to R2 and restores it into any Container, including one on a newer image. The Container reaches only the one object each operation needs.
 
 **[Read the documentation](https://developers.cloudflare.com/sandbox/)**
 
@@ -81,12 +82,12 @@ Version 0.x provided a `Sandbox` class that owned the Container and ran commands
 
 ## Repository
 
-| Path                                           | Contents                                                         |
-| ---------------------------------------------- | ---------------------------------------------------------------- |
-| [`packages/sandbox`](packages/sandbox)         | The `@cloudflare/sandbox` package                                |
-| [`crates/sandbox-tools`](crates/sandbox-tools) | `sandbox-shim`, the Linux helper that `Files` and `S3Mounts` run |
-| [`images/sandbox-tools`](images/sandbox-tools) | The `cloudflare/sandbox` image that ships `sandbox-shim`         |
-| [`examples`](examples)                         | Deployable Workers, one per goal                                 |
+| Path                                           | Contents                                                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`packages/sandbox`](packages/sandbox)         | The `@cloudflare/sandbox` package                                                     |
+| [`crates/sandbox-tools`](crates/sandbox-tools) | `sandbox-shim`, the Linux helper that `Files`, `S3Mounts`, and `DirectoryBackups` run |
+| [`images/sandbox-tools`](images/sandbox-tools) | The `cloudflare/sandbox` image that ships `sandbox-shim`                              |
+| [`examples`](examples)                         | Deployable Workers, one per goal                                                      |
 
 To learn how these parts fit together, read [Architecture](docs/architecture.md). The package and `sandbox-shim` exchange frames described in [Shim protocol](docs/shim-protocol.md). [S3 mounts design](docs/s3-mounts-design.md) explains `S3Mounts` and `S3Gateway`. To add an example, read [Examples](docs/examples.md).
 

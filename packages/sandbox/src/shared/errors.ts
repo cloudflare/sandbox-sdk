@@ -12,6 +12,8 @@ const FILE_OPERATIONS = [
   "mkdir",
   "rename",
   "remove",
+  "backup",
+  "restore",
 ] as const;
 
 const CANONICAL_ERRNO_NAMES = new Map<number, SandboxFileErrorCode>();
@@ -173,6 +175,64 @@ export const SandboxS3MountError = {
   },
 };
 
+export type SandboxBackupErrorCode = "BACKUP_NOT_FOUND" | "BACKUP_INTEGRITY" | "BACKUP_TRANSFER";
+
+export type DirectoryBackupOperation = "backup" | "restore" | "delete";
+
+/** A failure specific to a directory backup: a missing, altered, or unreachable object. */
+export interface SandboxBackupError extends Error {
+  readonly name: "SandboxBackupError";
+  readonly code: SandboxBackupErrorCode;
+  readonly operation: DirectoryBackupOperation;
+  /** The directory being backed up or restored, or the record's directory for `delete`. */
+  readonly path: string;
+  readonly detail: string;
+}
+
+class BackupError extends Error implements SandboxBackupError {
+  override readonly name = "SandboxBackupError";
+  readonly code: SandboxBackupErrorCode;
+  readonly operation: DirectoryBackupOperation;
+  readonly path: string;
+  readonly detail: string;
+
+  constructor(
+    code: SandboxBackupErrorCode,
+    operation: DirectoryBackupOperation,
+    path: string,
+    detail: string,
+  ) {
+    super(`${operation} '${path}': ${detail}`);
+    this.code = code;
+    this.operation = operation;
+    this.path = path;
+    this.detail = detail;
+  }
+}
+
+export const SandboxBackupError = {
+  /** Recognizes local and JSRPC-crossed SandboxBackupError values. */
+  is(cause: unknown): cause is SandboxBackupError {
+    return (
+      cause instanceof Error &&
+      cause.name === "SandboxBackupError" &&
+      hasOwn(cause, "code", isBackupErrorCode) &&
+      hasOwn(cause, "operation", isBackupOperation) &&
+      hasOwn(cause, "path", isString) &&
+      hasOwn(cause, "detail", isString)
+    );
+  },
+};
+
+export function backupError(
+  code: SandboxBackupErrorCode,
+  operation: DirectoryBackupOperation,
+  path: string,
+  detail: string,
+): SandboxBackupError {
+  return new BackupError(code, operation, path, detail);
+}
+
 export function protocolError(detail: string, cause?: unknown): SandboxProtocolError {
   return new ProtocolError(detail, cause);
 }
@@ -233,6 +293,16 @@ function isS3MountErrorCode(value: unknown): value is SandboxS3MountErrorCode {
     value === "S3_MOUNT_FAILED" ||
     value === "S3_MOUNT_INCOMPATIBLE"
   );
+}
+
+function isBackupErrorCode(value: unknown): value is SandboxBackupErrorCode {
+  return (
+    value === "BACKUP_NOT_FOUND" || value === "BACKUP_INTEGRITY" || value === "BACKUP_TRANSFER"
+  );
+}
+
+function isBackupOperation(value: unknown): value is DirectoryBackupOperation {
+  return value === "backup" || value === "restore" || value === "delete";
 }
 
 function isS3MountOperation(value: unknown): value is S3MountOperation {

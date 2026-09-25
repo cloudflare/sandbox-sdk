@@ -1,25 +1,41 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir as nativeMkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  mkdir as nativeMkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { DirectoryBackupGateway } from "../src/directory-backups/directory-backup-gateway.js";
+import { DirectoryBackups } from "../src/directory-backups/directory-backups.js";
 import { Files } from "../src/files/files.js";
 import { S3Mounts } from "../src/s3-mounts/s3-mounts.js";
+import { SandboxBackupError } from "../src/shared/errors.js";
+import { FixedLengthStreamDouble, R2BucketDouble } from "./r2-bucket-double.js";
+import { TestExecutionContext } from "./worker-test-doubles.js";
 
 const SHIM_PATH = process.env.SANDBOX_SHIM_PATH;
 
-function nativeContainer() {
+function nativeContainer(rewrite = (command) => command, intercept = () => undefined) {
   return {
     running: true,
-    interceptOutboundHttp() {
+    interceptOutboundHttp(host, fetcher) {
+      intercept(host, fetcher);
       return Promise.resolve();
     },
     exec(command, options) {
-      const child = spawn(SHIM_PATH, command.slice(1), {
+      const child = spawn(SHIM_PATH, rewrite(command).slice(1), {
         cwd: options.cwd,
         stdio: [
           options.stdin === "pipe" ? "pipe" : "ignore",
@@ -313,4 +329,161 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  describe("directory backups", () => {
+    beforeEach(() => {
+      vi.stubGlobal("FixedLengthStream", FixedLengthStreamDouble);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("backs up, restores over an existing directory, and deletes through the gateway", async () => {
+      const platform = await backupPlatform();
+      const directory = await mkdtemp(join(tmpdir(), "sandbox-backup-contract-"));
+      try {
+        const source = join(directory, "source");
+        await nativeMkdir(join(source, "nested"), { recursive: true });
+        await nativeMkdir(join(source, "skip"));
+        const random = randomBytes(3 * 1024 * 1024);
+        await writeFile(join(source, "random.bin"), random);
+        await writeFile(join(source, "nested", "note.txt"), "note");
+        await writeFile(join(source, "skip", "cache"), "cache");
+        await symlink("nested/note.txt", join(source, "link"));
+        const target = join(directory, "target");
+        await nativeMkdir(target);
+        await writeFile(join(target, "old.txt"), "old");
+
+        const record = await platform.backups.backup({ dir: source, exclude: ["skip/"] });
+        await platform.backups.restore(record, { dir: target });
+
+        expect(record).toMatchObject({ dir: source, format: "tar+zstd/1" });
+        expect(platform.bucket.objects.get(`backups/${record.id}.tar.zst`)?.bytes.length).toBe(
+          record.size,
+        );
+        expect((await readdir(target)).sort()).toEqual(["link", "nested", "random.bin"]);
+        expect(sha256(await readFile(join(target, "random.bin")))).toBe(sha256(random));
+        expect(await readlink(join(target, "link"))).toBe("nested/note.txt");
+        expect((await readdir(directory)).sort()).toEqual(["source", "target"]);
+        expect(platform.registrations.at(-1)).toBe("deny");
+
+        await platform.backups.delete(record);
+        const missing = await platform.backups
+          .restore(record, { dir: target })
+          .catch((cause) => cause);
+        expect(SandboxBackupError.is(missing) && missing.code).toBe("BACKUP_NOT_FOUND");
+        expect(sha256(await readFile(join(target, "random.bin")))).toBe(sha256(random));
+      } finally {
+        await platform.close();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a changed object without touching the target", async () => {
+      const platform = await backupPlatform();
+      const directory = await mkdtemp(join(tmpdir(), "sandbox-backup-contract-"));
+      try {
+        await writeFile(join(directory, "file.txt"), "original");
+        const record = await platform.backups.backup({ dir: directory });
+        const stored = platform.bucket.objects.get(`backups/${record.id}.tar.zst`);
+        const altered = new Uint8Array(stored.bytes);
+        altered[altered.length - 1] ^= 0xff;
+        platform.bucket.objects.set(`backups/${record.id}.tar.zst`, { ...stored, bytes: altered });
+        await writeFile(join(directory, "file.txt"), "changed");
+
+        const error = await platform.backups.restore(record).catch((cause) => cause);
+
+        expect(SandboxBackupError.is(error) && error.code).toBe("BACKUP_INTEGRITY");
+        expect(await readFile(join(directory, "file.txt"), "utf8")).toBe("changed");
+      } finally {
+        await platform.close();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+
+    it("runs concurrent operations one at a time", async () => {
+      const platform = await backupPlatform();
+      const directory = await mkdtemp(join(tmpdir(), "sandbox-backup-contract-"));
+      try {
+        const dirs = ["a", "b", "c"].map((name) => join(directory, name));
+        for (const dir of dirs) {
+          await nativeMkdir(dir);
+          await writeFile(join(dir, "name"), dir);
+        }
+
+        const records = await Promise.all(dirs.map((dir) => platform.backups.backup({ dir })));
+
+        expect(records.map((record) => record.dir)).toEqual(dirs);
+        expect(platform.registrations.filter((mode) => mode === "write")).toHaveLength(3);
+      } finally {
+        await platform.close();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  });
 });
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Stands in for the platform: an HTTP server that forwards the shim's requests to whichever
+ * gateway the package registered last, as the outbound intercept does.
+ */
+async function backupPlatform() {
+  const bucket = new R2BucketDouble();
+  const registrations = [];
+  let current;
+  const server = createServer(async (incoming, outgoing) => {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(incoming.headers)) {
+      if (name !== "host" && name !== "connection") headers.set(name, String(value));
+    }
+    const request = new Request(`http://backups.sandbox.internal${incoming.url}`, {
+      method: incoming.method,
+      headers,
+      body: incoming.method === "PUT" ? Readable.toWeb(incoming) : undefined,
+      duplex: "half",
+    });
+    const response = await current.fetch(request);
+    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.body !== null) {
+      for await (const chunk of response.body) outgoing.write(chunk);
+    }
+    outgoing.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const authority = `127.0.0.1:${server.address().port}`;
+  const propsByGateway = new WeakMap();
+  const binding = ({ props }) => {
+    const gateway = new DirectoryBackupGateway(new TestExecutionContext(props), {
+      BACKUPS: bucket,
+    });
+    propsByGateway.set(gateway, props);
+    return gateway;
+  };
+  const container = nativeContainer(
+    (command) => {
+      if (command[1] !== "directory-backup") return command;
+      const request = JSON.parse(command[3]);
+      return [...command.slice(0, 3), JSON.stringify({ ...request, gateway: authority })];
+    },
+    (host, gateway) => {
+      expect(host).toBe("backups.sandbox.internal");
+      registrations.push(propsByGateway.get(gateway).mode);
+      current = gateway;
+    },
+  );
+  return {
+    bucket,
+    registrations,
+    backups: new DirectoryBackups(container, binding, { binding: "BACKUPS", prefix: "backups/" }),
+    close: () =>
+      new Promise((resolve) => {
+        server.close(resolve);
+        server.closeAllConnections();
+      }),
+  };
+}

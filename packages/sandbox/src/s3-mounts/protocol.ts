@@ -16,6 +16,8 @@ import {
 import { S3_MOUNT_PROTOCOL_VERSION } from "./request.js";
 import {
   type ContainerExecutor,
+  type JsonValue,
+  parseJsonPayload,
   SHIM_PATH,
   type ShimControl,
   ShimSession,
@@ -55,7 +57,6 @@ export interface GuestMountRequest {
 
 type RouteCallback = (routeId: string) => Promise<void>;
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
 const ROUTE_READY = new Uint8Array([1]);
 const routeIdSchema = z.string().check(z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,58}[A-Za-z0-9])?$/));
 const keyPrefixSchema = z.optional(z.string().check(z.refine((value) => value.endsWith("/"))));
@@ -117,17 +118,14 @@ const inspectionEvidenceSchema = z.object({
   state: guestStateSchema,
   gateway: z.optional(gatewayStateSchema),
 });
-const jsonValueSchema = z.json();
 const envelopeSchema = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), value: jsonValueSchema }),
+  z.object({ ok: z.literal(true), value: z.json() }),
   z.object({
     ok: z.literal(false),
     error: z.object({ kind: z.string(), detail: z.string() }),
   }),
 ]);
 const routeSelectionSchema = z.object({ kind: z.literal("route"), routeId: routeIdSchema });
-
-type JsonValue = z.infer<typeof jsonValueSchema>;
 
 export function mountGuest(
   container: ContainerExecutor,
@@ -298,14 +296,10 @@ async function readEnvelope(
     throw protocolError("sandbox-shim did not return S3 mount command data");
   }
 
-  let value: JsonValue;
-  try {
-    const parsed = jsonValueSchema.safeParse(JSON.parse(decoder.decode(frame.payload)));
-    if (!parsed.success) throw new SyntaxError("value is not JSON-compatible");
-    value = parsed.data;
-  } catch (error) {
-    throw protocolError("sandbox-shim returned invalid S3 mount command data", error);
-  }
+  const value = parseJsonPayload(
+    frame.payload,
+    "sandbox-shim returned invalid S3 mount command data",
+  );
   return decodeEnvelope(value, operation, mountPath);
 }
 

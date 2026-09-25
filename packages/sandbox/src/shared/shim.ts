@@ -1,3 +1,5 @@
+import * as z from "zod/mini";
+
 import { protocolError } from "./errors.js";
 
 export type ContainerExecutor = Pick<Container, "exec">;
@@ -16,6 +18,20 @@ const FRAME_DATA = 2;
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 
+const jsonSchema = z.json();
+const jsonDecoder = new TextDecoder("utf-8", { fatal: true });
+
+export type JsonValue = z.infer<typeof jsonSchema>;
+
+/**
+ * How the caller's `AbortSignal` reaches the shim.
+ *
+ * - `kill`: the signal goes to `exec()`, which kills the process.
+ * - `stdin`: the process is never signalled. The caller closes stdin to stop it, and a shim that
+ *   starts after the abort has its stdin closed at once.
+ */
+export type ShimAbort = "kill" | "stdin";
+
 export type ShimControlFrame =
   | { readonly kind: "success" }
   | { readonly kind: "fileError"; readonly errno: number; readonly detail: string }
@@ -23,17 +39,18 @@ export type ShimControlFrame =
 
 class AbortMonitor {
   /**
-   * Follows the caller's signal until the shim settles. The caller's signal can outlive the
-   * call, as AbortSignal.timeout() does, and signalling an exited process logs a runtime error.
+   * The signal to pass to `exec()`, which follows the caller's until the shim settles. The
+   * caller's signal can outlive the call, as AbortSignal.timeout() does, and signalling an exited
+   * process logs a runtime error. Undefined when the process must not be signalled.
    */
   readonly signal: AbortSignal | undefined;
   readonly #promise: Promise<never> | undefined;
   #dispose: () => void = () => undefined;
 
-  constructor(signal: AbortSignal | undefined) {
+  constructor(signal: AbortSignal | undefined, abort: ShimAbort) {
     if (signal === undefined) return;
     const linked = new AbortController();
-    this.signal = linked.signal;
+    if (abort === "kill") this.signal = linked.signal;
 
     this.#promise = new Promise<never>((_, reject) => {
       if (signal.aborted) {
@@ -78,15 +95,15 @@ export class ShimSession {
     container: ContainerExecutor,
     command: string[],
     options: ContainerExecOptions,
+    abort: ShimAbort = "kill",
   ): Promise<ShimSession> {
-    const abort = new AbortMonitor(options.signal);
+    const monitor = new AbortMonitor(options.signal, abort);
+    const starting = container.exec(command, { ...options, signal: monitor.signal });
     try {
-      const process = await abort.waitFor(
-        container.exec(command, { ...options, signal: abort.signal }),
-      );
-      return new ShimSession(process, abort);
+      return new ShimSession(await monitor.waitFor(starting), monitor);
     } catch (error) {
-      abort.dispose();
+      monitor.dispose();
+      if (abort === "stdin") void starting.then(closeStdin, () => undefined);
       throw error;
     }
   }
@@ -247,6 +264,21 @@ export class ShimControl {
 
     return result;
   }
+}
+
+/** Decodes a data frame's payload as JSON, or throws a protocol error that says `invalid`. */
+export function parseJsonPayload(payload: Uint8Array, invalid: string): JsonValue {
+  try {
+    const parsed = jsonSchema.safeParse(JSON.parse(jsonDecoder.decode(payload)));
+    if (parsed.success) return parsed.data;
+  } catch (cause) {
+    throw protocolError(invalid, cause);
+  }
+  throw protocolError(invalid);
+}
+
+function closeStdin(process: ExecProcess): void {
+  void process.stdin?.close().catch(() => undefined);
 }
 
 function decodeErrorDetail(bytes: Uint8Array): string {
