@@ -1,6 +1,6 @@
 # cloudflare/sandbox
 
-This image ships `sandbox-shim`, the helper that [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) runs inside a sandbox for its `Files` and `S3Mounts` classes. It contains only the binary, at `/usr/local/bin/sandbox-shim`, so it does not run on its own.
+This image ships `sandbox-shim`, the helper that [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) runs inside a sandbox. It contains only the binary, at `/usr/local/bin/sandbox-shim`, so it does not run on its own.
 
 Copy the binary into your sandbox image. Use the tag that equals your installed `@cloudflare/sandbox` version, so the shim and the package come from the same release:
 
