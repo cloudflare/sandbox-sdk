@@ -368,7 +368,8 @@ impl<'a> Extractor<'a> {
     }
 }
 
-/// Extended header fields that apply to the next entry.
+/// Extended header fields that apply to the next entry. The tar crate's own PAX parser splits
+/// records at newlines, which a file name may contain; this one follows each record's length.
 #[derive(Default)]
 struct Pending {
     path: Option<Vec<u8>>,

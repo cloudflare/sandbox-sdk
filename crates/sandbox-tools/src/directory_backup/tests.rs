@@ -78,6 +78,12 @@ fn round_trips_a_tree() {
     fs::write(source.join(&long_name), b"long").unwrap();
     symlink("t".repeat(150), source.join("long-link")).unwrap();
     fs::write(source.join("line\nbreak"), b"newline").unwrap();
+    // Too long for the ustar field, so the newline travels inside a PAX record.
+    fs::write(
+        source.join(format!("{}\n{}", "a".repeat(60), "b".repeat(60))),
+        b"x",
+    )
+    .unwrap();
     fs::write(source.join(OsStr::from_bytes(b"bad-\xff")), b"binary").unwrap();
     fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o750)).unwrap();
     fs::set_permissions(&source, fs::Permissions::from_mode(0o710)).unwrap();
