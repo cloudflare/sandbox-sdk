@@ -9,25 +9,13 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 
 fn main() {
-    let mut args = std::env::args_os().skip(1).peekable();
-    // A directory backup reads stdin on its own thread for the whole operation, so stdin must
-    // not stay locked here.
-    let result = if args
-        .peek()
-        .is_some_and(|command| command == "directory-backup")
-    {
-        let arguments: Vec<OsString> = args.skip(1).collect();
-        directory_backup::run(&arguments, io::stdin(), &mut io::stdout().lock())
-            .map_err(|error| error.to_string())
-    } else {
-        run(
-            args,
-            io::stdin().lock(),
-            io::stdout().lock(),
-            io::stderr().lock(),
-        )
-    };
-    if let Err(error) = result {
+    // Stdin stays unlocked: a directory backup reads it on another thread.
+    if let Err(error) = run(
+        std::env::args_os().skip(1),
+        io::stdin(),
+        io::stdout().lock(),
+        io::stderr().lock(),
+    ) {
         eprintln!("sandbox-shim: {error}");
         std::process::exit(1);
     }
@@ -35,7 +23,7 @@ fn main() {
 
 fn run(
     mut args: impl Iterator<Item = OsString>,
-    mut input: impl Read,
+    mut input: impl Read + Send + 'static,
     mut stdout: impl Write,
     mut stderr: impl Write,
 ) -> Result<(), String> {
@@ -53,6 +41,10 @@ fn run(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             s3_mount::run(&arguments, &mut input, &mut stdout).map_err(|error| error.to_string())
+        }
+        Some("directory-backup") => {
+            let arguments: Vec<OsString> = args.collect();
+            directory_backup::run(&arguments, input, &mut stdout).map_err(|error| error.to_string())
         }
         Some(command) => files::run(command, args, input, &mut stdout, &mut stderr),
         None => Err("unknown command".into()),
