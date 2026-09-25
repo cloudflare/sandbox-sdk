@@ -8,6 +8,8 @@ import {
 } from "../shared/errors.js";
 import {
   type ContainerExecutor,
+  type JsonValue,
+  parseJsonPayload,
   SHIM_PATH,
   type ShimControl,
   ShimSession,
@@ -17,12 +19,9 @@ import {
 export const GATEWAY_HOST = "backups.sandbox.internal";
 
 const ACKNOWLEDGEMENT = new Uint8Array([1]);
-const decoder = new TextDecoder("utf-8", { fatal: true });
 const messageSchema = z.object({ kind: z.string() });
 const errorSchema = z.object({ kind: z.literal("error"), code: z.string(), detail: z.string() });
 const lockedSchema = z.strictObject({ kind: z.literal("locked") });
-
-type JsonValue = z.infer<ReturnType<typeof z.json>>;
 
 export interface ShimExchange<Done> {
   readonly command: "backup" | "restore";
@@ -52,25 +51,13 @@ export async function runShimExchange<Done>(
 ): Promise<Done> {
   const { signal } = exchange;
   signal?.throwIfAborted();
-  const abort = new AbortRace(signal);
   const operation: DirectoryBackupOperation = exchange.command;
-  const starting = ShimSession.start(
+  const session = await ShimSession.start(
     container,
     [SHIM_PATH, "directory-backup", exchange.command, JSON.stringify(exchange.request)],
-    { stdin: "pipe", stdout: "pipe", stderr: "ignore" },
+    { stdin: "pipe", stdout: "pipe", stderr: "ignore", signal },
+    "stdin",
   );
-  let session: ShimSession;
-  try {
-    session = await abort.race(starting);
-  } catch (error) {
-    abort.dispose();
-    // A shim that starts after an abort sees stdin close and exits.
-    void starting.then(
-      (late) => closeStdin(late.openStdinWriter()),
-      () => undefined,
-    );
-    throw error;
-  }
 
   let control: ShimControl | undefined;
   let input: WritableStreamDefaultWriter<Uint8Array> | undefined;
@@ -89,20 +76,20 @@ export async function runShimExchange<Done>(
   try {
     control = session.openStdoutControl();
     input = session.openStdinWriter();
-    const locked = await abort.race(readMessage(control, operation, exchange.path));
+    const locked = await readMessage(control, operation, exchange.path);
     if (!lockedSchema.safeParse(locked).success) {
       throw protocolError("sandbox-shim did not report that it holds the backup lock");
     }
     granting = exchange.grant();
-    await abort.race(granting);
-    await abort.race(input.write(ACKNOWLEDGEMENT));
-    const result = await abort.race(readMessage(control, operation, exchange.path));
+    await session.waitFor(granting);
+    await session.waitFor(input.write(ACKNOWLEDGEMENT));
+    const result = await readMessage(control, operation, exchange.path);
     const done = exchange.done.safeParse(result);
     if (!done.success) throw protocolError("sandbox-shim returned an invalid backup result");
 
     await release();
-    await abort.race(control.expectEnd());
-    const exitCode = await abort.race(session.process.exitCode);
+    await control.expectEnd();
+    const exitCode = await session.waitFor(session.process.exitCode);
     if (exitCode !== 0) throw protocolError(`sandbox-shim exited with code ${exitCode}`);
     control.releaseLock();
     return done.data;
@@ -111,7 +98,6 @@ export async function runShimExchange<Done>(
     control?.discard(error);
     throw error;
   } finally {
-    abort.dispose();
     session.finish();
   }
 }
@@ -130,14 +116,7 @@ async function readMessage(
     );
   }
   if (frame.kind !== "data") throw protocolError("sandbox-shim did not return backup data");
-  let value: JsonValue;
-  try {
-    const parsed = z.json().safeParse(JSON.parse(decoder.decode(frame.payload)));
-    if (!parsed.success) throw new SyntaxError("value is not JSON-compatible");
-    value = parsed.data;
-  } catch (error) {
-    throw protocolError("sandbox-shim returned invalid backup data", error);
-  }
+  const value = parseJsonPayload(frame.payload, "sandbox-shim returned invalid backup data");
   if (!messageSchema.safeParse(value).success) {
     throw protocolError("sandbox-shim returned invalid backup data");
   }
@@ -168,30 +147,4 @@ function shimFailure(
 
 function closeStdin(input: WritableStreamDefaultWriter<Uint8Array>): void {
   void input.close().catch(() => undefined);
-}
-
-/** Races each step against the caller's signal without imposing a timeout. */
-class AbortRace {
-  readonly #aborted: Promise<never> | undefined;
-  #dispose: () => void = () => undefined;
-
-  constructor(signal: AbortSignal | undefined) {
-    if (signal === undefined) return;
-    this.#aborted = new Promise<never>((_, reject) => {
-      const onAbort = () => reject(signal.reason);
-      signal.addEventListener("abort", onAbort, { once: true });
-      this.#dispose = () => signal.removeEventListener("abort", onAbort);
-    });
-    void this.#aborted.catch(() => undefined);
-  }
-
-  race<Value>(step: Promise<Value>): Promise<Value> {
-    if (this.#aborted === undefined) return step;
-    return Promise.race([this.#aborted, step]);
-  }
-
-  dispose(): void {
-    this.#dispose();
-    this.#dispose = () => undefined;
-  }
 }

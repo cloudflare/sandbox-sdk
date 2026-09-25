@@ -227,6 +227,23 @@ describe("DirectoryBackups.backup", () => {
     expect(container.interceptOutboundHttp).not.toHaveBeenCalled();
   });
 
+  it("closes the stdin of a shim that starts after the abort", async () => {
+    const { log, backups, shim, container } = setup({ first: [] });
+    const started = deferred<ExecProcess>();
+    container.exec.mockImplementationOnce(() => started.promise);
+    const controller = new AbortController();
+
+    const pending = backups.backup({ dir: "/workspace", signal: controller.signal });
+    await vi.waitFor(() => expect(container.exec).toHaveBeenCalled());
+    controller.abort(new Error("stop"));
+    await expect(pending).rejects.toThrow("stop");
+    started.resolve(shim.process);
+
+    await vi.waitFor(() => expect(log).toEqual(["stdin closed"]));
+    expect(container.exec.mock.calls[0]?.[1]?.signal).toBeUndefined();
+    expect(shim.kill).not.toHaveBeenCalled();
+  });
+
   it("reports a shim that ends without taking the lock as a protocol error", async () => {
     const { backups, shim } = setup({ first: [] });
     void shim.process.stdout?.cancel();
