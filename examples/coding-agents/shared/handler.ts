@@ -30,7 +30,9 @@ export default {
     const sandbox = env.SANDBOX.getByName(sandboxName);
     try {
       if (resource === "repository" && request.method === "POST") {
-        const parsed = repositoryRequestSchema.safeParse(await request.json());
+        const parsed = repositoryRequestSchema.safeParse(
+          await request.json().catch(() => undefined),
+        );
         if (!parsed.success) {
           return new Response('Body must be {"url": "https://github.com/...", "ref"?: string}', {
             status: 400,

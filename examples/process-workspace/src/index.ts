@@ -198,7 +198,7 @@ async function route(
     if (method === "POST") {
       const process = await sandbox.startProcess(
         sandboxName,
-        StartRequest.parse(await request.json()),
+        await parseBody(request, StartRequest),
       );
       if (process === undefined) return new Response("Process ID is in use", { status: 409 });
       return Response.json(process, { status: 201 });
@@ -230,13 +230,13 @@ async function route(
     return log ?? new Response("Process not found", { status: 404 });
   }
   if (action === "wait-for-log" && method === "POST") {
-    const result = await sandbox.waitForLog(id, WaitForLogRequest.parse(await request.json()));
+    const result = await sandbox.waitForLog(id, await parseBody(request, WaitForLogRequest));
     return result === undefined
       ? new Response("Process not found", { status: 404 })
       : Response.json(result);
   }
   if (action === "wait" && method === "POST") {
-    const result = await sandbox.waitForExit(id, WaitRequest.parse(await request.json()));
+    const result = await sandbox.waitForExit(id, await parseBody(request, WaitRequest));
     return result === undefined
       ? new Response("Process not found", { status: 404 })
       : Response.json(result);
@@ -248,6 +248,11 @@ function requireContainer(ctx: DurableObjectState): Container {
   const container = ctx.container;
   if (container === undefined) throw new Error("Container attachment is unavailable");
   return container;
+}
+
+// A body that is not JSON fails validation with 400, like any other bad body, instead of a 500.
+async function parseBody<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+  return schema.parse(await request.json().catch(() => undefined));
 }
 
 // Structured logs drop an Error's message and stack because they are not enumerable.

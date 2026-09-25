@@ -156,11 +156,11 @@ export default {
         return Response.json(await sandbox.outboundRules());
       }
       if (resource === "outbound-rules" && request.method === "PUT") {
-        const rules = OutboundRules.parse(await request.json());
+        const rules = await parseBody(request, OutboundRules);
         return Response.json(await sandbox.setOutboundRules(rules));
       }
       if (resource === "commands" && request.method === "POST") {
-        const { argv } = CommandRequest.parse(await request.json());
+        const { argv } = await parseBody(request, CommandRequest);
         return Response.json(await sandbox.run(sandboxName, argv));
       }
       if (resource === "execution" && request.method === "DELETE") {
@@ -185,6 +185,11 @@ function requireContainer(ctx: DurableObjectState): Container {
   const container = ctx.container;
   if (container === undefined) throw new Error("Container attachment is unavailable");
   return container;
+}
+
+// A body that is not JSON fails validation with 400, like any other bad body, instead of a 500.
+async function parseBody<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+  return schema.parse(await request.json().catch(() => undefined));
 }
 
 // Structured logs drop an Error's message and stack because they are not enumerable.
