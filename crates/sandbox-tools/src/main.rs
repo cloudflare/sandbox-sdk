@@ -1,5 +1,6 @@
 mod directory_backup;
 mod files;
+mod http;
 mod protocol;
 mod s3_mount;
 #[cfg(test)]

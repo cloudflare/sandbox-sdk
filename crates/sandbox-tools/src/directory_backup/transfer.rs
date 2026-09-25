@@ -1,8 +1,8 @@
 //! Moves the compressed archive between the container and the gateway: fixed-size parts up,
-//! verified byte ranges down, several at a time, over plain HTTP/1.1 to the intercepted host.
+//! verified byte ranges down, several at a time, one HTTP request each.
 
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -13,12 +13,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::Failure;
-use super::lifeline::Lifeline;
+use super::lifeline::{Lifeline, SocketGuard};
+use crate::http;
 
 /// R2 requires every part but the last to have the same size.
 pub(super) const PART_SIZE: usize = 16 * 1024 * 1024;
 const MAX_PARALLEL: usize = 16;
-const MAX_HEADER_BYTES: usize = 64 * 1024;
+/// The part upload result is `{"etag": ...}`.
+const MAX_RESULT_BYTES: usize = 64 * 1024;
 const MAX_DETAIL_BYTES: usize = 4 * 1024;
 
 /// Parts or ranges in flight at once: at most 16, and at most a quarter of available memory.
@@ -51,12 +53,6 @@ pub(super) struct Gateway {
     lifeline: Lifeline,
 }
 
-struct Response {
-    status: u16,
-    content_range: Option<String>,
-    body: BodyReader,
-}
-
 impl Gateway {
     /// `authority` is `host` or `host:port`; the port defaults to 80.
     pub(super) fn resolve(authority: &str, lifeline: Lifeline) -> Result<Self, Failure> {
@@ -84,16 +80,11 @@ impl Gateway {
 
     /// Uploads part `number` and returns its ETag.
     pub(super) fn put_part(&self, number: u32, body: &[u8]) -> Result<String, Failure> {
-        let head = format!(
-            "PUT /parts/{number} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\nUser-Agent: sandbox-shim/1\r\n\r\n",
-            self.host,
-            body.len()
-        );
-        let mut response = self.exchange(&head, body)?;
+        let (mut response, _guard) = self.request("PUT", &format!("/parts/{number}"), &[], body)?;
         if response.status != 200 {
             return Err(self.rejected(&mut response, "part upload"));
         }
-        let body = self.read_bounded(&mut response.body, MAX_HEADER_BYTES)?;
+        let body = self.read_bounded(&mut response.body, MAX_RESULT_BYTES)?;
         #[derive(serde::Deserialize)]
         struct Uploaded {
             etag: String,
@@ -111,11 +102,8 @@ impl Gateway {
         total: u64,
     ) -> Result<Vec<u8>, Failure> {
         let last = offset + length - 1;
-        let head = format!(
-            "GET /object HTTP/1.1\r\nHost: {}\r\nRange: bytes={offset}-{last}\r\nConnection: close\r\nUser-Agent: sandbox-shim/1\r\n\r\n",
-            self.host
-        );
-        let mut response = self.exchange(&head, &[])?;
+        let range = format!("bytes={offset}-{last}");
+        let (mut response, _guard) = self.request("GET", "/object", &[("Range", &range)], &[])?;
         match response.status {
             206 => {}
             404 => return Err(Failure::NotFound("the backup object does not exist".into())),
@@ -127,13 +115,11 @@ impl Gateway {
             _ => return Err(self.rejected(&mut response, "range download")),
         }
         let expected = format!("bytes {offset}-{last}/{total}");
-        if response.content_range.as_deref() != Some(expected.as_str()) {
+        let content_range = response.header("content-range");
+        if content_range != Some(expected.as_str()) {
             return Err(Failure::Integrity(format!(
                 "range {offset}-{last} came back as {}",
-                response
-                    .content_range
-                    .as_deref()
-                    .unwrap_or("no Content-Range")
+                content_range.unwrap_or("no Content-Range")
             )));
         }
         let mut bytes = Vec::with_capacity(length as usize);
@@ -150,53 +136,32 @@ impl Gateway {
         Ok(bytes)
     }
 
-    fn exchange(&self, head: &str, body: &[u8]) -> Result<Response, Failure> {
+    /// Sends one request. The guard keeps the connection registered with the lifeline, so an
+    /// abort can unblock a read of the body; hold it until the body is read.
+    fn request(
+        &self,
+        method: &str,
+        target: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(http::Response, SocketGuard), Failure> {
         if self.lifeline.aborted() {
             return Err(Failure::Aborted);
         }
         let stream =
             TcpStream::connect(self.address).map_err(|error| self.connection_failure(error))?;
         let guard = self.lifeline.register(&stream);
-        (&stream)
-            .write_all(head.as_bytes())
-            .and_then(|()| (&stream).write_all(body))
-            .map_err(|error| self.connection_failure(error))?;
-        let mut reader = BufReader::with_capacity(256 * 1024, stream);
-        let (status, headers) = read_head(&mut reader).map_err(|error| match error {
-            HeadError::Io(error) => self.connection_failure(error),
-            HeadError::Invalid(detail) => Failure::Transfer(detail),
-        })?;
-        let header = |name: &str| {
-            headers
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value.clone())
-        };
-        let chunked = header("transfer-encoding")
-            .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"));
-        let length = header("content-length").and_then(|value| value.parse::<u64>().ok());
-        let body = BodyReader {
-            inner: reader,
-            framing: if chunked {
-                Framing::Chunked {
-                    remaining: 0,
-                    done: false,
+        let response =
+            http::request(stream, method, target, &self.host, headers, body).map_err(|error| {
+                match error {
+                    http::Error::Io(error) => self.connection_failure(error),
+                    http::Error::Invalid(detail) => Failure::Transfer(detail),
                 }
-            } else if let Some(length) = length {
-                Framing::Length(length)
-            } else {
-                Framing::Close
-            },
-            _guard: guard,
-        };
-        Ok(Response {
-            status,
-            content_range: header("content-range"),
-            body,
-        })
+            })?;
+        Ok((response, guard))
     }
 
-    fn rejected(&self, response: &mut Response, action: &str) -> Failure {
+    fn rejected(&self, response: &mut http::Response, action: &str) -> Failure {
         let detail = self
             .read_bounded(&mut response.body, MAX_DETAIL_BYTES)
             .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
@@ -209,7 +174,7 @@ impl Gateway {
         })
     }
 
-    fn read_bounded(&self, body: &mut BodyReader, limit: usize) -> Result<Vec<u8>, Failure> {
+    fn read_bounded(&self, body: &mut http::Body, limit: usize) -> Result<Vec<u8>, Failure> {
         let mut bytes = Vec::new();
         body.take(limit as u64)
             .read_to_end(&mut bytes)
@@ -222,111 +187,6 @@ impl Gateway {
             Failure::Aborted
         } else {
             Failure::Transfer(format!("gateway connection failed: {error}"))
-        }
-    }
-}
-
-enum HeadError {
-    Io(io::Error),
-    Invalid(String),
-}
-
-fn read_head(reader: &mut impl BufRead) -> Result<(u16, Vec<(String, String)>), HeadError> {
-    let mut head = Vec::new();
-    loop {
-        let before = head.len();
-        reader
-            .by_ref()
-            .take((MAX_HEADER_BYTES - head.len()) as u64)
-            .read_until(b'\n', &mut head)
-            .map_err(HeadError::Io)?;
-        if head.len() == before {
-            return Err(HeadError::Invalid(
-                "gateway closed the connection before responding".into(),
-            ));
-        }
-        if head.ends_with(b"\r\n\r\n") {
-            break;
-        }
-        if head.len() >= MAX_HEADER_BYTES {
-            return Err(HeadError::Invalid(
-                "gateway response headers were too large".into(),
-            ));
-        }
-    }
-    let text = String::from_utf8_lossy(&head);
-    let mut lines = text.split("\r\n");
-    let status = lines
-        .next()
-        .and_then(|line| line.strip_prefix("HTTP/1."))
-        .and_then(|rest| rest.split(' ').nth(1))
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| HeadError::Invalid("gateway returned invalid HTTP".into()))?;
-    let headers = lines
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| line.split_once(':'))
-        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
-        .collect();
-    Ok((status, headers))
-}
-
-enum Framing {
-    Length(u64),
-    Chunked { remaining: u64, done: bool },
-    Close,
-}
-
-struct BodyReader {
-    inner: BufReader<TcpStream>,
-    framing: Framing,
-    _guard: super::lifeline::SocketGuard,
-}
-
-impl Read for BodyReader {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        match &mut self.framing {
-            Framing::Close => self.inner.read(buffer),
-            Framing::Length(remaining) => {
-                if *remaining == 0 {
-                    return Ok(0);
-                }
-                let limit = buffer.len().min(*remaining as usize);
-                let count = self.inner.read(&mut buffer[..limit])?;
-                if count == 0 {
-                    return Err(io::ErrorKind::UnexpectedEof.into());
-                }
-                *remaining -= count as u64;
-                Ok(count)
-            }
-            Framing::Chunked { remaining, done } => {
-                if *done {
-                    return Ok(0);
-                }
-                if *remaining == 0 {
-                    let mut line = String::new();
-                    self.inner.by_ref().take(1024).read_line(&mut line)?;
-                    let size = line.trim().split(';').next().unwrap_or_default();
-                    let size = u64::from_str_radix(size, 16).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "bad chunk size")
-                    })?;
-                    if size == 0 {
-                        *done = true;
-                        return Ok(0);
-                    }
-                    *remaining = size;
-                }
-                let limit = buffer.len().min(*remaining as usize);
-                let count = self.inner.read(&mut buffer[..limit])?;
-                if count == 0 {
-                    return Err(io::ErrorKind::UnexpectedEof.into());
-                }
-                *remaining -= count as u64;
-                if *remaining == 0 {
-                    let mut crlf = [0u8; 2];
-                    self.inner.read_exact(&mut crlf)?;
-                }
-                Ok(count)
-            }
         }
     }
 }
