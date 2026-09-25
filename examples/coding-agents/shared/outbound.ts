@@ -9,6 +9,11 @@ const GATEWAY_HOST = "gateway.ai.cloudflare.com";
 export class Outbound extends WorkerEntrypoint<CodingAgentEnv> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // The Worker fetches with the guest's scheme, so a credential added to plain HTTP would cross
+    // the Internet unencrypted.
+    if (url.protocol !== "https:") {
+      return new Response(`${url.hostname} is reachable only over HTTPS\n`, { status: 403 });
+    }
     if (url.hostname === GATEWAY_HOST && this.#isGatewayPath(url.pathname)) {
       const headers = new Headers(request.headers);
       // Agents need a key to start; the gateway would forward a placeholder x-api-key to the provider.

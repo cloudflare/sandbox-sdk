@@ -51,7 +51,7 @@ curl --request POST "$WORKER_URL/sandboxes/agent-1/commands" \
   --data '{"argv":["curl","-sS","https://httpbin.org/headers"]}'
 ```
 
-The response shows `Authorization: Bearer` with your token, which never enters the Container. Switch the host to `audit` to log each request to Workers Logs instead. Remove it from `handlers` to stop handling it.
+The response shows `Authorization: Bearer` with your token, which never enters the Container. The same request over `http://` gets `403`, because the Worker fetches with the Container's scheme and would send the token unencrypted. Switch the host to `audit` to log each request to Workers Logs instead. Remove it from `handlers` to stop handling it.
 
 Only HTTP on port 80 and HTTPS on port 443 leave the Container. Connections to other ports time out, whatever the rules say. HTTPS to a bare IP address fails, because interception needs a hostname.
 

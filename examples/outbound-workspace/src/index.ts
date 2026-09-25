@@ -39,15 +39,19 @@ export class Outbound extends WorkerEntrypoint<Env, OutboundProps> {
     const decision = decide(rules, url.hostname);
     if (decision.action === "deny") return new Response(`${decision.reason}\n`, { status: 403 });
     if (decision.action === "fetch") return fetch(request);
-    return this.#handle(decision.handler, request);
+    return this.#handle(decision.handler, request, url);
   }
 
-  #handle(handler: HandlerName, request: Request): Promise<Response> | Response {
+  #handle(handler: HandlerName, request: Request, url: URL): Promise<Response> | Response {
     if (handler === "audit") {
       console.log({ event: "outbound.audit", method: request.method, url: request.url });
       return fetch(request);
     }
-    // Credentials stay in the Worker. The Container never sees the token.
+    // Credentials stay in the Worker. The Container never sees the token. The Worker fetches with
+    // the guest's scheme, so a token added to plain HTTP would cross the Internet unencrypted.
+    if (url.protocol !== "https:") {
+      return new Response("bearer-token sends its token only over HTTPS\n", { status: 403 });
+    }
     if (this.env.UPSTREAM_TOKEN === undefined) {
       return new Response("UPSTREAM_TOKEN is not set\n", { status: 500 });
     }
