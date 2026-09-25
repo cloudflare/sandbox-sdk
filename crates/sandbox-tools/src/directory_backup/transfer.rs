@@ -12,8 +12,8 @@ use std::thread::JoinHandle;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::Failure;
 use super::lifeline::{Lifeline, SocketGuard};
+use super::{Failure, hex};
 use crate::http;
 
 /// R2 requires every part but the last to have the same size.
@@ -198,6 +198,8 @@ pub(super) struct UploadedPart {
     pub(super) etag: String,
 }
 
+/// What the Durable Object needs to complete the upload, sent in the final frame.
+#[derive(Serialize)]
 pub(super) struct Uploaded {
     pub(super) size: u64,
     pub(super) sha256: String,
@@ -518,10 +520,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-pub(super) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

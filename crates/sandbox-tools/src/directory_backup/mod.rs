@@ -23,13 +23,12 @@ use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use self::capture::Selection;
 use self::lifeline::Lifeline;
-use self::restore::RestoreRequest;
-use self::transfer::{Gateway, PART_SIZE, PartSink};
+use self::transfer::{Gateway, PART_SIZE, PartSink, Uploaded};
 use crate::protocol;
 
 const LOCK_PATH: &str = "/run/sandbox/directory-backups.lock";
@@ -125,18 +124,8 @@ pub(crate) fn run(
     let command = args.first().and_then(|command| command.to_str());
     let request = args.get(1).map(|request| request.as_bytes());
     match (command, request, args.len()) {
-        (Some("backup"), Some(request), 2) => match parse::<BackupRequest>(request) {
-            Ok(request) => Session::run(input, output, Path::new(LOCK_PATH), |session| {
-                backup(&request, session)
-            }),
-            Err(failure) => write_failure(output, failure),
-        },
-        (Some("restore"), Some(request), 2) => match parse::<RestoreRequest>(request) {
-            Ok(request) => Session::run(input, output, Path::new(LOCK_PATH), |session| {
-                restore::restore(&request, session).map(|()| json!({}))
-            }),
-            Err(failure) => write_failure(output, failure),
-        },
+        (Some("backup"), Some(request), 2) => operate(request, input, output, backup),
+        (Some("restore"), Some(request), 2) => operate(request, input, output, restore::restore),
         _ => write_failure(
             output,
             Failure::Protocol(
@@ -146,61 +135,64 @@ pub(crate) fn run(
     }
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(request: &[u8]) -> Result<T, Failure> {
-    serde_json::from_slice(request)
-        .map_err(|error| Failure::Protocol(format!("invalid directory backup request: {error}")))
+/// Every frame the shim sends is one of these, as JSON in a data frame.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum Message<'a, Done> {
+    Locked,
+    Done(Done),
+    Error { code: &'a str, detail: &'a str },
 }
 
+fn send<Done: Serialize>(output: &mut impl Write, message: &Message<'_, Done>) -> io::Result<()> {
+    protocol::write_data(output, &serde_json::to_vec(message)?)
+}
+
+/// Parses the request, then runs `work` in a session. A request that doesn't parse fails before
+/// the lock.
+fn operate<Request: DeserializeOwned, Done: Serialize, W: Write>(
+    request: &[u8],
+    input: impl Read + Send + 'static,
+    output: &mut W,
+    work: impl FnOnce(&Request, &mut Session<'_, W>) -> Result<Done, Failure>,
+) -> io::Result<()> {
+    let request = match serde_json::from_slice::<Request>(request) {
+        Ok(request) => request,
+        Err(error) => {
+            let detail = format!("invalid directory backup request: {error}");
+            return write_failure(output, Failure::Protocol(detail));
+        }
+    };
+    let mut session = Session {
+        output,
+        lifeline: Lifeline::start(input),
+        lock: None,
+    };
+    match work(&request, &mut session) {
+        Ok(done) => send(session.output, &Message::Done(done))?,
+        // Once stdin has closed nobody reads the result, whatever the failure was.
+        Err(_) if session.lifeline.aborted() => return Ok(()),
+        Err(failure) => write_failure(session.output, failure)?,
+    }
+    session.lifeline.wait_for_close();
+    drop(session.lock.take());
+    Ok(())
+}
+
+/// One operation's stdout, lifeline, and hold on the container-wide lock.
 struct Session<'a, W: Write> {
     output: &'a mut W,
     lifeline: Lifeline,
-    lock_path: &'a Path,
     lock: Option<File>,
 }
 
-impl<'a, W: Write> Session<'a, W> {
-    fn run(
-        input: impl Read + Send + 'static,
-        output: &'a mut W,
-        lock_path: &'a Path,
-        work: impl FnOnce(&mut Self) -> Result<Value, Failure>,
-    ) -> io::Result<()> {
-        let lifeline = Lifeline::start(input);
-        Self::with_lifeline(lifeline, output, lock_path, work)
-    }
-
-    fn with_lifeline(
-        lifeline: Lifeline,
-        output: &'a mut W,
-        lock_path: &'a Path,
-        work: impl FnOnce(&mut Self) -> Result<Value, Failure>,
-    ) -> io::Result<()> {
-        let mut session = Self {
-            output,
-            lifeline,
-            lock_path,
-            lock: None,
-        };
-        let result = work(&mut session);
-        match result {
-            Ok(mut value) => {
-                value["kind"] = json!("done");
-                protocol::write_data(session.output, value.to_string().as_bytes())?;
-            }
-            // Once stdin has closed nobody reads the result, whatever the failure was.
-            Err(_) if session.lifeline.aborted() => return Ok(()),
-            Err(Failure::Aborted) => return Ok(()),
-            Err(failure) => write_failure(session.output, failure)?,
-        }
-        session.lifeline.wait_for_close();
-        drop(session.lock.take());
-        Ok(())
-    }
-
+impl<W: Write> Session<'_, W> {
     /// Waits for the container-wide lock, then for the package to register this operation's
     /// grant.
     fn lock(&mut self) -> Result<(), Failure> {
-        if let Some(directory) = self.lock_path.parent() {
+        let path = Path::new(LOCK_PATH);
+        let failure = |error| file_failure(error, LOCK_PATH.as_bytes());
+        if let Some(directory) = path.parent() {
             fs::create_dir_all(directory)
                 .map_err(|error| file_failure(error, directory.as_os_str().as_bytes()))?;
         }
@@ -209,12 +201,11 @@ impl<'a, W: Write> Session<'a, W> {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.lock_path)
-            .map_err(|error| file_failure(error, self.lock_path.as_os_str().as_bytes()))?;
-        sys::lock_exclusive(&file)
-            .map_err(|error| file_failure(error, self.lock_path.as_os_str().as_bytes()))?;
+            .open(path)
+            .map_err(failure)?;
+        sys::lock_exclusive(&file).map_err(failure)?;
         self.lock = Some(file);
-        protocol::write_data(self.output, br#"{"kind":"locked"}"#).map_err(|_| Failure::Aborted)?;
+        send(self.output, &Message::<'_, ()>::Locked).map_err(|_| Failure::Aborted)?;
         if self.lifeline.wait_for_acknowledgement() {
             Ok(())
         } else {
@@ -232,8 +223,11 @@ fn write_failure(output: &mut impl Write, failure: Failure) -> io::Result<()> {
         Failure::Protocol(detail) => ("protocol", detail),
         Failure::Aborted => return Ok(()),
     };
-    let message = json!({ "kind": "error", "code": code, "detail": detail });
-    protocol::write_data(output, message.to_string().as_bytes())
+    let message: Message<'_, ()> = Message::Error {
+        code,
+        detail: &detail,
+    };
+    send(output, &message)
 }
 
 fn absolute(dir: &str) -> Result<PathBuf, Failure> {
@@ -246,16 +240,10 @@ fn absolute(dir: &str) -> Result<PathBuf, Failure> {
 fn backup<W: Write>(
     request: &BackupRequest,
     session: &mut Session<'_, W>,
-) -> Result<Value, Failure> {
+) -> Result<Uploaded, Failure> {
     let root = absolute(&request.dir)?;
-    let status = sys::lstatx(root.as_os_str())
-        .map_err(|error| file_failure(error, root.as_os_str().as_bytes()))?;
-    if status.file_type() != libc::S_IFDIR {
-        return Err(Failure::File {
-            errno: libc::ENOTDIR,
-            detail: format!("{}: not a directory", root.display()),
-        });
-    }
+    // Fail before waiting for the lock. Capture reads the root again once it holds the lock.
+    capture::root_status(&root)?;
     let selection = Selection::new(&root, &request.exclude, request.gitignore)?;
     session.lock()?;
 
@@ -276,10 +264,9 @@ fn backup<W: Write>(
     }
     let aborted = || lifeline.aborted();
     let encoder = capture::capture(&root, &selection, encoder, &aborted)?;
-    let uploaded = encoder.finish().map_err(Failure::writing)?.finish()?;
-    Ok(json!({
-        "size": uploaded.size,
-        "sha256": uploaded.sha256,
-        "parts": uploaded.parts,
-    }))
+    encoder.finish().map_err(Failure::writing)?.finish()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

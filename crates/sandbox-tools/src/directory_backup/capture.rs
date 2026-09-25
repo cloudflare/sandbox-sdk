@@ -80,14 +80,7 @@ pub(super) fn capture<W: Write>(
     output: W,
     aborted: &dyn Fn() -> bool,
 ) -> Result<W, Failure> {
-    let status = sys::lstatx(root.as_os_str())
-        .map_err(|error| file_failure(error, root.as_os_str().as_bytes()))?;
-    if status.file_type() != libc::S_IFDIR {
-        return Err(Failure::File {
-            errno: libc::ENOTDIR,
-            detail: format!("{}: not a directory", root.display()),
-        });
-    }
+    let status = root_status(root)?;
     let mut walk = Walk {
         builder: tar::Builder::new(output),
         selection,
@@ -98,6 +91,19 @@ pub(super) fn capture<W: Write>(
     walk.emit(b"./", &status, Kind::Directory, &mut io::empty())?;
     walk.directory(root.to_path_buf(), Vec::new(), &mut Vec::new())?;
     walk.builder.into_inner().map_err(Failure::writing)
+}
+
+/// The status of the directory to back up, which must be a directory.
+pub(super) fn root_status(root: &Path) -> Result<Status, Failure> {
+    let status = sys::lstatx(root.as_os_str())
+        .map_err(|error| file_failure(error, root.as_os_str().as_bytes()))?;
+    if status.file_type() != libc::S_IFDIR {
+        return Err(Failure::File {
+            errno: libc::ENOTDIR,
+            detail: format!("{}: not a directory", root.display()),
+        });
+    }
+    Ok(status)
 }
 
 enum Kind<'a> {

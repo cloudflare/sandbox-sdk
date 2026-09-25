@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use super::extract::Extractor;
 use super::lifeline::Lifeline;
 use super::transfer::{self, Gateway, PART_SIZE, RangeReader};
-use super::{Failure, Session, absolute, file_failure, sys};
+use super::{Failure, Session, absolute, file_failure, hex, sys};
 
 const SIBLING_PREFIX: &str = ".sandbox-restore-";
 const MAX_TRAILING_BYTES: u64 = 1024 * 1024;
@@ -28,6 +28,7 @@ pub(super) struct RestoreRequest {
     sha256: String,
 }
 
+/// Restores the backup. The final frame carries nothing but its kind.
 pub(super) fn restore<W: Write>(
     request: &RestoreRequest,
     session: &mut Session<'_, W>,
@@ -112,7 +113,7 @@ impl Sibling {
     /// Removes what earlier restores into the same target left behind, then creates a sibling
     /// named after the target, so that the next restore finds it.
     fn create(target: &Target) -> Result<Self, Failure> {
-        let tag = &transfer::hex(&Sha256::digest(target.name.as_bytes()))[..8];
+        let tag = &hex(&Sha256::digest(target.name.as_bytes()))[..8];
         let prefix = format!("{SIBLING_PREFIX}{tag}-");
         sweep(&target.parent, &prefix);
         let name = format!("{prefix}{}", random_hex()?);
@@ -213,5 +214,5 @@ fn random_hex() -> Result<String, Failure> {
     if count != bytes.len() as isize {
         return Err(file_failure(io::Error::last_os_error(), b"getrandom"));
     }
-    Ok(transfer::hex(&bytes))
+    Ok(hex(&bytes))
 }
