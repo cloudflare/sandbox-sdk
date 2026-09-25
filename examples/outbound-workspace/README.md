@@ -1,6 +1,6 @@
 # Outbound workspace
 
-Deploy this Worker to run commands in a named Container whose outbound HTTP and HTTPS requests follow rules you can change while it runs. Rules can block hosts, allow them, or send them to a handler in the Worker that adds a credential. For the walkthrough, see [Control outbound requests](../../docs/control-outbound-requests.md).
+Deploy this Worker to run commands in a named Container whose outbound HTTP and HTTPS requests follow rules you can change while it runs. Rules can block hosts, allow them, or send them to a handler in the Worker that adds a credential. For outbound interception, see [Handle outbound traffic](https://developers.cloudflare.com/sandbox/network/handle-outbound-traffic/) and [`interceptOutboundHttp()`](https://developers.cloudflare.com/durable-objects/api/container/#interceptoutboundhttp).
 
 Done when changing a rule changes what the next `curl` in the Container can reach, without restarting it.
 

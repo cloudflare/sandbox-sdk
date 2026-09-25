@@ -1,6 +1,6 @@
 # Code workspace
 
-Deploy this Worker to write a script into a named Container and run it. For the walkthrough, see [Run a Linux task](../../docs/get-started.md).
+Deploy this Worker to write a script into a named Container and run it. For step-by-step guides, see [Run a Linux command](https://developers.cloudflare.com/sandbox/get-started/containers/) and [Move files in and out of a sandbox](https://developers.cloudflare.com/sandbox/files/manage-files/).
 
 Done when `POST .../run` returns `hello from the sandbox` in `stdout`.
 

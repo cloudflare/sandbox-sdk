@@ -1,6 +1,6 @@
 # Checkpoint a workspace
 
-Deploy this Worker to save Container disk and start from that snapshot. For the walkthrough, see [Checkpoint a workspace](../../docs/checkpoint-a-workspace.md).
+Deploy this Worker to save Container disk and start from that snapshot. For a step-by-step guide, see [Save and restore a sandbox with snapshots](https://developers.cloudflare.com/sandbox/files/save-and-restore-a-workspace/).
 
 Done when a read after checkpoint returns the same bytes you wrote.
 

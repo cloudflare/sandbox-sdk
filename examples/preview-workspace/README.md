@@ -1,6 +1,6 @@
 # Preview workspace
 
-Deploy this Worker to run a Vite dev server in a named Container and open it in a browser. Each sandbox gets its own preview origin, `https://<name>.preview.example.com/`. Edits hot-reload. For the walkthrough, see [Preview a web app](../../docs/preview-a-web-app.md).
+Deploy this Worker to run a Vite dev server in a named Container and open it in a browser. Each sandbox gets its own preview origin, `https://<name>.preview.example.com/`. Edits hot-reload. For the hostname routing step by step, see [Serve previews on their own hostnames](https://developers.cloudflare.com/sandbox/previews/serve-previews-on-their-own-hostnames/).
 
 Done when the preview page shows your edit without a reload.
 

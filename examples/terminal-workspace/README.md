@@ -1,6 +1,6 @@
 # Terminal workspace
 
-Deploy this Worker to open a live shell in a named Container from your browser. The shell runs in a tmux session, so it keeps running when the page closes or the connection drops. For the walkthrough, see [Open a terminal in a sandbox](../../docs/open-a-terminal.md).
+Deploy this Worker to open a live shell in a named Container from your browser. The shell runs in a tmux session, so it keeps running when the page closes or the connection drops. For a step-by-step guide, see [Open a terminal in the browser](https://developers.cloudflare.com/sandbox/commands/open-a-terminal-in-the-browser/).
 
 Done when the page shows a prompt, `stty size` changes when you resize the window, and reloading the page returns to the same shell.
 

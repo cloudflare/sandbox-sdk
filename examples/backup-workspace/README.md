@@ -1,6 +1,6 @@
 # Backup workspace
 
-Deploy this Worker to back up a directory in a named Container to R2, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. For the walkthrough, see [Back up a directory](../../docs/back-up-a-directory.md).
+Deploy this Worker to back up a directory in a named Container to R2, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. This example writes the archive to disk before it uploads it. For a guide that streams the archive to R2 without writing it to disk, see [Back up a directory to R2](https://developers.cloudflare.com/sandbox/files/back-up-a-directory-to-r2/).
 
 Done when a directory restored from R2 matches the backup, after its Container was reset.
 

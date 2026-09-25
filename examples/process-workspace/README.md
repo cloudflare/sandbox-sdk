@@ -1,6 +1,6 @@
 # Process workspace
 
-Deploy this Worker to start named background processes in a Container. You can then check their status, read or follow their output, wait for a log line or an exit, and stop them. For the walkthrough, see [Run background processes](../../docs/run-background-processes.md).
+Deploy this Worker to start named background processes in a Container. You can then check their status, read or follow their output, wait for a log line or an exit, and stop them. For a step-by-step guide, see [Run background processes](https://developers.cloudflare.com/sandbox/commands/run-background-processes/).
 
 Done when a process started by one request is still running, and its output can be read, from later requests.
 

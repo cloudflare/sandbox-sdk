@@ -57,8 +57,8 @@ The next input or digest request mounts the same prefix again.
 
 Keep one sandbox name for one job. For a new job or tenant, use a new sandbox name. Do not mount and unmount repeatedly in the same Container.
 
-S3 is object storage. Do not depend on POSIX locking, atomic rename, or immediate cache coherence. See [Mount S3-compatible storage](../../docs/s3-mounts.md).
+S3 is object storage. Do not depend on POSIX locking, atomic rename, or immediate cache coherence. See [Mounted file behavior](https://developers.cloudflare.com/sandbox/reference/s3-mounts/#mounted-file-behavior).
 
 Authenticate these routes in production and derive the sandbox name from the authenticated job or tenant. Prefer read-only mounts when the guest does not need to write.
 
-To run this example under `wrangler dev` against a local S3 server, see [Develop locally](../../docs/s3-mounts.md#develop-locally).
+To run this example under `wrangler dev` against a local S3 server, see [Develop locally](https://developers.cloudflare.com/sandbox/files/mount-an-r2-bucket/#develop-locally).

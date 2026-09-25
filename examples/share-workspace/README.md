@@ -1,10 +1,10 @@
 # Share workspace
 
-Deploy this Worker to share servers that run in a named Container. Each exposed port gets its own URL with a secret token, served through your Worker. A quick tunnel gives a port a public `trycloudflare.com` URL instead. For the walkthrough, see [Share a port](../../docs/share-a-port.md).
+Deploy this Worker to share servers that run in a named Container. Each exposed port gets its own URL with a secret token, served through your Worker. A quick tunnel gives a port a public `trycloudflare.com` URL instead. For links with a token, see [Share a preview with a link](https://developers.cloudflare.com/sandbox/previews/preview-a-web-application/#share-a-preview-with-a-link). For tunnels, see [Replace tunnels](https://developers.cloudflare.com/sandbox/sdk/migrate/previews-and-tunnels/#replace-tunnels).
 
 Done when a server in the Container answers at its preview URL and at a quick tunnel URL.
 
-Preview URLs need a wildcard hostname on a zone you own. In `wrangler.jsonc`, replace `preview.example.com` in `PREVIEW_DOMAIN` and `routes` with your own. Add a proxied wildcard DNS record for it and a certificate that covers it, as in [Preview a web app](../../docs/preview-a-web-app.md#2-give-each-sandbox-its-own-origin). Then deploy:
+Preview URLs need a wildcard hostname on a zone you own. In `wrangler.jsonc`, replace `preview.example.com` in `PREVIEW_DOMAIN` and `routes` with your own. Add a proxied wildcard DNS record for it and a certificate that covers it, as in [Route preview hostnames to your Worker](https://developers.cloudflare.com/sandbox/previews/serve-previews-on-their-own-hostnames/#route-preview-hostnames-to-your-worker). Then deploy:
 
 ```sh
 npm run example:share-workspace:deploy
@@ -55,4 +55,4 @@ An exposed port stays exposed after the Container stops, and its URL returns `50
 
 - Authenticate the control routes. `servers` runs any command you send.
 - The Container starts with Internet access, because `cloudflared` needs it. Remove tunnels and set `enableInternet: false` if you only need preview URLs.
-- Quick tunnels have no uptime guarantee. Use a named tunnel for production traffic that must bypass your Worker. See [Share a port](../../docs/share-a-port.md#6-use-a-named-tunnel).
+- Quick tunnels have no uptime guarantee. Use a named tunnel for production traffic that must bypass your Worker. See [Replace tunnels](https://developers.cloudflare.com/sandbox/sdk/migrate/previews-and-tunnels/#replace-tunnels).
