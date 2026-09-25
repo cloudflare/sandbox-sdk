@@ -4,6 +4,7 @@ import { DurableObject } from "cloudflare:workers";
 const ACTIVE_CHECKPOINT_KEY = "active-container-checkpoint";
 const WORKSPACE_FILE = "/workspace/message.txt";
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
 
 interface ActiveCheckpoint {
   id: string;
@@ -24,7 +25,12 @@ export class CheckpointSandbox extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.files = new Files(this.requireContainer());
+    const container = this.requireContainer();
+    this.files = new Files(container);
+    // Each Durable Object instance must set its own timeout; it is not inherited.
+    if (container.running) {
+      void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS));
+    }
   }
 
   async writeWorkspace(content: ReadableStream<Uint8Array>, sandboxName: string): Promise<void> {
@@ -74,6 +80,8 @@ export class CheckpointSandbox extends DurableObject<Env> {
     } else {
       container.start({ containerSnapshot: { id: checkpoint.id }, ...commonOptions });
     }
+    // Without it, the Container can stop between writing the workspace and checkpointing it.
+    await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
     return container;
   }
 
