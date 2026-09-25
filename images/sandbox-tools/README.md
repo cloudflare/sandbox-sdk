@@ -1,21 +1,15 @@
-# Sandbox workspace tools
+# Sandbox tools image
 
-This Dockerfile builds `sandbox-shim`. The `image` target is a donor, not a sandbox.
+This Dockerfile builds `sandbox-shim` into a donor image. The image contains only the binary, at `/usr/local/bin/sandbox-shim`. It is not a sandbox image: application images copy the binary out of it.
 
-Done when `sandbox-tools:local` exists.
+Build it locally as `sandbox-tools:local`, which the examples copy from:
 
 ```sh
 npm run shim:build
 ```
 
-Copy the binary into your image:
+Done when `docker image inspect sandbox-tools:local` succeeds.
 
-```dockerfile
-ARG SANDBOX_TOOLS_IMAGE=sandbox-tools:local
-FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
+Releases publish this image as `cloudflare/sandbox`, tagged with the `@cloudflare/sandbox` package version, so that an application's shim matches its package. `examples/minimal` copies from the published image.
 
-FROM alpine:3.23
-COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
-```
-
-Pin a versioned donor in production. Keep your own base image.
+The `verify` target runs the Rust checks, the contract test, and the binary checks. See [Testing](../../docs/testing.md#shim-checks).
