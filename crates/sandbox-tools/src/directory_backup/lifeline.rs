@@ -168,15 +168,14 @@ impl Drop for SocketGuard {
 }
 
 #[cfg(test)]
-pub(super) fn test_lifeline() -> Lifeline {
-    let lifeline = Lifeline::detached();
-    lifeline.lock().exit_on_close = false;
-    lifeline
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_lifeline() -> Lifeline {
+        let lifeline = Lifeline::detached();
+        lifeline.lock().exit_on_close = false;
+        lifeline
+    }
 
     /// Stdin that yields what the test sends and ends when the sender is dropped.
     struct Channel(std::sync::mpsc::Receiver<u8>);

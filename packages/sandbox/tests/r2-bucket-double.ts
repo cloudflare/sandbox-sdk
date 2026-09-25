@@ -15,7 +15,6 @@ interface Upload {
 export class R2BucketDouble implements BackupBucket {
   readonly objects = new Map<string, StoredObject>();
   readonly uploads = new Map<string, Upload>();
-  readonly aborted: string[] = [];
   #nextUpload = 0;
 
   async get(
@@ -70,7 +69,6 @@ export class R2BucketDouble implements BackupBucket {
         return { size: bytes.length };
       },
       abort: async () => {
-        this.aborted.push(uploadId);
         this.uploads.delete(uploadId);
       },
     };

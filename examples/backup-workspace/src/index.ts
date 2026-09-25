@@ -264,7 +264,8 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-// Not AbortSignal.timeout(): it stays armed after the operation ends. Clear the timer instead.
+// Not AbortSignal.timeout(): it stays armed after the operation ends, and exec() signals a process
+// that has already exited, which logs a runtime error. Clear the timer instead.
 async function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), OPERATION_TIMEOUT_MS);

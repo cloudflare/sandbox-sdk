@@ -372,7 +372,7 @@ fn set_mtime(path: &Path, mtime: (i64, u32)) {
     sys::set_mtime_fd(fd.as_raw_fd(), mtime).unwrap();
 }
 
-// The package tells a rejected part from a failed compression by the failure the part carries.
+// A rejected part reaches the package as `transfer` only if zstd passes the part's failure through.
 #[test]
 fn a_rejected_part_reaches_the_caller_through_zstd() {
     let sink = PartSink::new(|_, _| Err(Failure::Transfer("rejected".into())), 64, 1);

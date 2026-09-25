@@ -1,6 +1,6 @@
-//! Extracts a backup's tar stream into a new, private directory. Every path is resolved
-//! relative to that directory's descriptor with `openat2`, so no entry can reach outside it,
-//! through a symlink, or across a mount, whatever the archive contains.
+//! Extracts a backup's tar stream into a new, private directory. Every path is resolved beneath
+//! that directory's descriptor without following symlinks (`sys::open_beneath`), so no entry can
+//! reach outside it, whatever the archive contains.
 
 use std::ffi::CString;
 use std::io::{self, Read, Write};
