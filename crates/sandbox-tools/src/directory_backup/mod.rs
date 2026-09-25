@@ -10,6 +10,7 @@
 mod capture;
 mod extract;
 mod lifeline;
+mod restore;
 mod sys;
 #[cfg(test)]
 mod tests;
@@ -19,26 +20,22 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use self::capture::Selection;
-use self::extract::Extractor;
 use self::lifeline::Lifeline;
-use self::transfer::{Gateway, PART_SIZE, PartSink, RangeReader};
+use self::restore::RestoreRequest;
+use self::transfer::{Gateway, PART_SIZE, PartSink};
 use crate::protocol;
 
 const LOCK_PATH: &str = "/run/sandbox/directory-backups.lock";
 /// zstd's `--fast=3`: on the smallest instance it was 1.45 times faster than level 1, for an
 /// archive about 10% larger.
 const COMPRESSION_LEVEL: i32 = -3;
-const SIBLING_PREFIX: &str = ".sandbox-restore-";
-const MAX_TRAILING_BYTES: u64 = 1024 * 1024;
 
 /// Why an operation failed. Inside a reader or writer it travels as the payload of an
 /// `io::Error`, so it survives zstd and tar unchanged; `Failure::reading` and
@@ -120,15 +117,6 @@ struct BackupRequest {
     gitignore: bool,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RestoreRequest {
-    gateway: String,
-    dir: String,
-    size: u64,
-    sha256: String,
-}
-
 pub(crate) fn run(
     args: &[OsString],
     input: impl Read + Send + 'static,
@@ -145,7 +133,7 @@ pub(crate) fn run(
         },
         (Some("restore"), Some(request), 2) => match parse::<RestoreRequest>(request) {
             Ok(request) => Session::run(input, output, Path::new(LOCK_PATH), |session| {
-                restore(&request, session)
+                restore::restore(&request, session).map(|()| json!({}))
             }),
             Err(failure) => write_failure(output, failure),
         },
@@ -294,149 +282,4 @@ fn backup<W: Write>(
         "sha256": uploaded.sha256,
         "parts": uploaded.parts,
     }))
-}
-
-fn restore<W: Write>(
-    request: &RestoreRequest,
-    session: &mut Session<'_, W>,
-) -> Result<Value, Failure> {
-    if request.size == 0
-        || request.sha256.len() != 64
-        || !request
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(Failure::Protocol("invalid backup size or SHA-256".into()));
-    }
-    let target = absolute(&request.dir)?;
-    let target_bytes = target.as_os_str().as_bytes();
-    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
-        return Err(Failure::File {
-            errno: libc::EBUSY,
-            detail: format!("{}: cannot restore over this path", target.display()),
-        });
-    };
-    let parent_fd = sys::open_directory(parent.as_os_str())
-        .map_err(|error| file_failure(error, parent.as_os_str().as_bytes()))?;
-    let parent_status = sys::fstatx(parent_fd.as_raw_fd())
-        .map_err(|error| file_failure(error, parent.as_os_str().as_bytes()))?;
-    let name_c = sys::c_name(name.as_bytes()).map_err(|error| file_failure(error, target_bytes))?;
-    let existing = match sys::statx_beneath(parent_fd.as_raw_fd(), &name_c) {
-        Ok(status) => Some(status),
-        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => None,
-        Err(error) => return Err(file_failure(error, target_bytes)),
-    };
-    if let Some(status) = existing {
-        if status.file_type() != libc::S_IFDIR {
-            return Err(Failure::File {
-                errno: libc::ENOTDIR,
-                detail: format!("{}: not a directory", target.display()),
-            });
-        }
-        if status.mount != parent_status.mount {
-            return Err(Failure::File {
-                errno: libc::EBUSY,
-                detail: format!("{}: is a mount point", target.display()),
-            });
-        }
-    }
-    session.lock()?;
-
-    let tag = &transfer::hex(&Sha256::digest(name.as_bytes()))[..8];
-    let sibling_prefix = format!("{SIBLING_PREFIX}{tag}-");
-    sweep(parent, &sibling_prefix);
-    let sibling_name = format!("{sibling_prefix}{}", random_hex()?);
-    let sibling_c =
-        sys::c_name(sibling_name.as_bytes()).map_err(|error| file_failure(error, target_bytes))?;
-    let sibling_path = parent.join(&sibling_name);
-    sys::mkdir_at(parent_fd.as_raw_fd(), &sibling_c, 0o700)
-        .map_err(|error| file_failure(error, sibling_path.as_os_str().as_bytes()))?;
-    // Removes the partial tree on failure, and the old tree after a swap.
-    let _cleanup = RemoveOnDrop(sibling_path.clone());
-    let sibling_fd = sys::open_directory_at(parent_fd.as_raw_fd(), &sibling_c)
-        .map_err(|error| file_failure(error, sibling_path.as_os_str().as_bytes()))?;
-
-    let lifeline = session.lifeline.clone();
-    let gateway = Gateway::resolve(&request.gateway, lifeline.clone())?;
-    let size = request.size;
-    let ranges = RangeReader::new(
-        move |offset, length| gateway.get_range(offset, length, size),
-        size,
-        PART_SIZE as u64,
-        transfer::parallelism(),
-    );
-    let aborted = || lifeline.aborted();
-    let mut decoder = zstd::stream::read::Decoder::new(ranges).map_err(Failure::reading)?;
-    let mut extractor = Extractor::new(sibling_fd, &aborted)?;
-    extractor.extract(&mut decoder)?;
-
-    // Only the tar format's end padding may follow the end marker.
-    let trailing = io::copy(
-        &mut (&mut decoder).take(MAX_TRAILING_BYTES + 1),
-        &mut io::sink(),
-    )
-    .map_err(Failure::reading)?;
-    if trailing > MAX_TRAILING_BYTES {
-        return Err(Failure::Integrity("the archive has trailing data".into()));
-    }
-    let ranges = decoder.finish().into_inner();
-    let (count, sha256) = ranges.digest();
-    if !ranges.exhausted() || count != request.size || sha256 != request.sha256 {
-        return Err(Failure::Integrity(
-            "the backup's size or SHA-256 does not match its record".into(),
-        ));
-    }
-    drop(ranges);
-    extractor.finish()?;
-
-    let swapped = if existing.is_some() {
-        sys::exchange_at(parent_fd.as_raw_fd(), &sibling_c, &name_c)
-    } else {
-        sys::rename_noreplace_at(parent_fd.as_raw_fd(), &sibling_c, &name_c)
-    };
-    swapped.map_err(|error| file_failure(error, target_bytes))?;
-    Ok(json!({}))
-}
-
-/// Removes what earlier restores into the same target left behind, without following symlinks.
-fn sweep(parent: &Path, prefix: &str) {
-    let Ok(entries) = fs::read_dir(parent) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_name().as_bytes().starts_with(prefix.as_bytes()) {
-            remove(&entry.path());
-        }
-    }
-}
-
-fn remove(path: &Path) {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => {
-            let _ = fs::remove_dir_all(path);
-        }
-        Ok(_) => {
-            let _ = fs::remove_file(path);
-        }
-        Err(_) => {}
-    }
-}
-
-struct RemoveOnDrop(PathBuf);
-
-impl Drop for RemoveOnDrop {
-    fn drop(&mut self) {
-        remove(&self.0);
-    }
-}
-
-fn random_hex() -> Result<String, Failure> {
-    let mut bytes = [0u8; 8];
-    // SAFETY: `bytes` is writable for its whole length.
-    let count = unsafe { libc::getrandom(bytes.as_mut_ptr().cast(), bytes.len(), 0) };
-    if count != bytes.len() as isize {
-        return Err(file_failure(io::Error::last_os_error(), b"getrandom"));
-    }
-    Ok(transfer::hex(&bytes))
 }
