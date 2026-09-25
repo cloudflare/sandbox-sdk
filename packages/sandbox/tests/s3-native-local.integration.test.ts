@@ -27,12 +27,11 @@ const bucket = "models";
 const keyPrefix = "current";
 const mountPath = "/mnt/models";
 const content = "native-local-release-ready";
-const minioImage =
-  "minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
 const localImagePattern = "cloudflare-dev/s3nativelocalsandbox-sandbox:*";
 const testId = `${process.pid}-${Date.now()}`;
 const workerName = `sandbox-s3-native-${testId}`;
 const minioName = `sandbox-s3-native-minio-${testId}`;
+const minioImage = minioName;
 
 interface NativeMountRequest {
   endpoint: string;
@@ -50,6 +49,7 @@ let stateDirectory: string | undefined;
 let workerOrigin: string | undefined;
 let minioEndpoint: string | undefined;
 let minioStarted = false;
+let minioBuilt = false;
 let imagesBefore = new Set<string>();
 let imagesCaptured = false;
 
@@ -200,6 +200,8 @@ async function buildToolsImage(): Promise<void> {
 }
 
 async function startMinio(): Promise<void> {
+  await docker(["build", "--tag", minioImage, "packages/sandbox/tests/fixtures/minio"]);
+  minioBuilt = true;
   await docker([
     "run",
     "--detach",
@@ -354,6 +356,8 @@ async function cleanup(): Promise<void> {
   if (containerIds.length > 0) await docker(["rm", "--force", ...containerIds], false);
   if (minioStarted) await docker(["rm", "--force", minioName], false);
   minioStarted = false;
+  if (minioBuilt) await docker(["image", "rm", "--force", minioImage], false);
+  minioBuilt = false;
 
   if (imagesCaptured) {
     const imagesAfter = await localContainerImages();

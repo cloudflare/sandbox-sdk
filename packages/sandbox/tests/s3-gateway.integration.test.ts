@@ -12,8 +12,7 @@ import { handleS3GatewayRequest } from "../src/s3-mounts/gateway.js";
 
 const run = promisify(execFile);
 const addressSchema = z.object({ port: z.number().check(z.int(), z.positive()) });
-const MINIO_IMAGE =
-  "minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
+const MINIO_BUILD_CONTEXT = "packages/sandbox/tests/fixtures/minio";
 const S3FS_IMAGE =
   "ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254";
 const S3FS_VERSION = "1.93-1build3";
@@ -21,6 +20,7 @@ const ACCESS_KEY = "sandbox-integration-access";
 const SECRET_KEY = "sandbox-integration-secret";
 
 const containers = new Set<string>();
+const images = new Set<string>();
 const servers = new Set<Server>();
 
 interface ObservedRequest {
@@ -36,6 +36,12 @@ afterEach(async () => {
     Array.from(containers, (name) => run("docker", ["rm", "--force", name]).catch(() => undefined)),
   );
   containers.clear();
+  await Promise.all(
+    Array.from(images, (image) =>
+      run("docker", ["image", "rm", "--force", image]).catch(() => undefined),
+    ),
+  );
+  images.clear();
   await Promise.all(
     Array.from(
       servers,
@@ -156,6 +162,8 @@ describe.skipIf(process.env.SANDBOX_S3_E2E !== "1")("S3 gateway with MinIO and s
 
 async function startMinio(): Promise<{ endpoint: string }> {
   const name = `sandbox-s3-minio-${crypto.randomUUID()}`;
+  images.add(name);
+  await run("docker", ["build", "--quiet", "--tag", name, MINIO_BUILD_CONTEXT]);
   containers.add(name);
   await run("docker", [
     "run",
@@ -169,7 +177,7 @@ async function startMinio(): Promise<{ endpoint: string }> {
     `MINIO_ROOT_PASSWORD=${SECRET_KEY}`,
     "--publish",
     "127.0.0.1::9000",
-    MINIO_IMAGE,
+    name,
     "server",
     "/data",
   ]);

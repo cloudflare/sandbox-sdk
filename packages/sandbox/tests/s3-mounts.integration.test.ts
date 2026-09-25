@@ -19,8 +19,7 @@ const secretAccessKey = "release-secret-key";
 const testId = `${process.pid}-${Date.now()}`;
 const toolsImage = `sandbox-tools-lifecycle-test-${testId}`;
 const image = `sandbox-s3-lifecycle-test-${testId}`;
-const minioImage =
-  "minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
+const minioImage = `sandbox-s3-minio-lifecycle-test-${testId}`;
 const socatImage =
   "alpine/socat@sha256:c5a091e1e735a90aa941a5828529dbe6c6157407a8047a9aa473faa133361b82";
 const extraCa = process.env.SANDBOX_EXTRA_CA;
@@ -78,6 +77,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
       "packages/sandbox/tests/fixtures/s3-lifecycle/Dockerfile",
       ".",
     ]);
+    await docker(["build", "--tag", minioImage, "packages/sandbox/tests/fixtures/minio"]);
     await docker(["network", "create", network]);
     await docker([
       "run",
@@ -151,7 +151,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
     await docker(["rm", "--force", workspace, proxy, minio], false);
     if (bridge !== undefined) await new Promise<void>((resolve) => bridge.close(() => resolve()));
     await docker(["network", "rm", network], false);
-    await docker(["image", "rm", "--force", image, toolsImage], false);
+    await docker(["image", "rm", "--force", image, toolsImage, minioImage], false);
   });
 
   it("mounts, adopts, inspects, denies, retries, and unmounts", async () => {
