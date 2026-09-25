@@ -11,7 +11,7 @@ A sandbox is a Durable Object and the [Container](https://developers.cloudflare.
 
 - [`Files`](https://developers.cloudflare.com/sandbox/reference/files/) streams files in and out of the running instance and reports Linux errors such as `ENOENT`.
 - [`S3Mounts`](https://developers.cloudflare.com/sandbox/reference/s3-mounts/) mounts an S3-compatible bucket at a path. Your Worker signs each storage request, so the credentials never enter the sandbox.
-- `DirectoryBackups` saves a directory to R2 and restores it into any Container, including one on a newer image. The Container reaches only the one object each operation needs.
+- [`DirectoryBackups`](https://developers.cloudflare.com/sandbox/reference/directory-backups/) saves a directory to R2 and restores it into any Container, including one on a newer image. The Container reaches only the one object each operation needs.
 
 **[Read the documentation](https://developers.cloudflare.com/sandbox/)**
 
