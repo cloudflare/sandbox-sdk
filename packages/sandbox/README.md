@@ -64,17 +64,17 @@ The image needs the helper that `Files` runs, and the Worker needs `nodejs_compa
 
 | Goal                                   | Guide                                                                                                                              | Example                                                                                                  |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Run a script and read its output       | [Execute commands](https://developers.cloudflare.com/sandbox/commands/execute-commands/)                                           | [`workspace`](examples/workspace)                                                                        |
+| Run a script and read its output       | [Execute commands](https://developers.cloudflare.com/containers/guides/execute-commands/)                                          | [`workspace`](examples/workspace)                                                                        |
 | Keep a server or build running         | [Run background processes](https://developers.cloudflare.com/sandbox/commands/run-background-processes/)                           | [`process-workspace`](examples/process-workspace)                                                        |
 | Open a shell in the browser            | [Open a terminal in the browser](https://developers.cloudflare.com/sandbox/commands/open-a-terminal-in-the-browser/)               | [`terminal-workspace`](examples/terminal-workspace)                                                      |
 | Process files from a bucket            | [Mount an R2 bucket](https://developers.cloudflare.com/sandbox/files/mount-an-r2-bucket/)                                          | [`artifact-workspace`](examples/artifact-workspace)                                                      |
 | Save a workspace and resume it later   | [Save and restore a sandbox](https://developers.cloudflare.com/sandbox/files/save-and-restore-a-workspace/)                        | [`checkpoint-workspace`](examples/checkpoint-workspace), [`backup-workspace`](examples/backup-workspace) |
-| Preview a web app while you edit it    | [Preview a web application](https://developers.cloudflare.com/sandbox/previews/preview-a-web-application/)                         | [`preview-workspace`](examples/preview-workspace)                                                        |
+| Preview a web app while you edit it    | [Preview a web application](https://developers.cloudflare.com/sandbox/previews/)                                                   | [`preview-workspace`](examples/preview-workspace)                                                        |
 | Share a port on its own URL            | [Serve previews on their own hostnames](https://developers.cloudflare.com/sandbox/previews/serve-previews-on-their-own-hostnames/) | [`share-workspace`](examples/share-workspace)                                                            |
 | Choose which hosts a sandbox can reach | [Control network access](https://developers.cloudflare.com/sandbox/network/)                                                       | [`outbound-workspace`](examples/outbound-workspace)                                                      |
 | Run a coding agent on a repository     | [Coding agents](https://developers.cloudflare.com/sandbox/coding-agents/)                                                          | [`coding-agents`](examples/coding-agents), [`devin`](devin), [`openai/agents-api`](openai/agents-api)    |
 
-To run JavaScript or Python without a Linux environment, use [Dynamic Workers](https://developers.cloudflare.com/sandbox/choose-an-environment/) instead.
+To run JavaScript or Python without a Linux environment, use [Dynamic Workers](https://developers.cloudflare.com/sandbox/concepts/) instead.
 
 ## Coming from 0.x
 

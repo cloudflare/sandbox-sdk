@@ -1,6 +1,6 @@
 # Coding agents
 
-Run a coding agent on a GitHub repository in a named Container. Each sandbox clones one repository, runs one task at a time, and returns the agent's changes as a diff. For a step-by-step guide, see [Build a coding agent runner](https://developers.cloudflare.com/sandbox/tutorials/build-a-coding-agent-runner/) and [Run coding agents in a sandbox](https://developers.cloudflare.com/sandbox/coding-agents/).
+Run a coding agent on a GitHub repository in a named Container. Each sandbox clones one repository, runs one task at a time, and returns the agent's changes as a diff. For a step-by-step guide, see [Build a coding agent runner](https://developers.cloudflare.com/sandbox/get-started/build-a-coding-agent-runner/) and [Run coding agents in a sandbox](https://developers.cloudflare.com/sandbox/coding-agents/).
 
 Done when `GET .../diff` shows the change you asked for.
 

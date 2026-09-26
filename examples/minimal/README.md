@@ -56,6 +56,6 @@ The `Dockerfile` copies the helper that `Files` uses from `docker.io/cloudflare/
 
 ## Next steps
 
-- [Run a Linux command](https://developers.cloudflare.com/sandbox/get-started/containers/)
+- [Run a Linux command](https://developers.cloudflare.com/sandbox/get-started/)
 - [Files API](https://developers.cloudflare.com/sandbox/reference/files/)
 - [Save and restore a sandbox with snapshots](https://developers.cloudflare.com/sandbox/files/save-and-restore-a-workspace/)

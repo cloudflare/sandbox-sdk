@@ -1,6 +1,6 @@
 # Share workspace
 
-Deploy this Worker to share servers that run in a named Container. Each exposed port gets its own URL with a secret token, served through your Worker. A quick tunnel gives a port a public `trycloudflare.com` URL instead. For links with a token, see [Share a preview with a link](https://developers.cloudflare.com/sandbox/previews/preview-a-web-application/#share-a-preview-with-a-link). For tunnels, see [Replace tunnels](https://developers.cloudflare.com/sandbox/sdk/migrate/previews-and-tunnels/#replace-tunnels).
+Deploy this Worker to share servers that run in a named Container. Each exposed port gets its own URL with a secret token, served through your Worker. A quick tunnel gives a port a public `trycloudflare.com` URL instead. For links with a token, see [Share a preview with a link](https://developers.cloudflare.com/sandbox/previews/#share-a-preview-with-a-link). For tunnels, see [Move tunnels](https://developers.cloudflare.com/sandbox/sdk/migrate/tunnels/).
 
 Done when a server in the Container answers at its preview URL and at a quick tunnel URL.
 
@@ -55,4 +55,4 @@ An exposed port stays exposed after the Container stops, and its URL returns `50
 
 - Authenticate the control routes. `servers` runs any command you send.
 - The Container starts with Internet access, because `cloudflared` needs it. Remove tunnels and set `enableInternet: false` if you only need preview URLs.
-- Quick tunnels have no uptime guarantee. Use a named tunnel for production traffic that must bypass your Worker. See [Replace tunnels](https://developers.cloudflare.com/sandbox/sdk/migrate/previews-and-tunnels/#replace-tunnels).
+- Quick tunnels have no uptime guarantee. Use a named tunnel for production traffic that must bypass your Worker. See [Serve new named hostnames](https://developers.cloudflare.com/sandbox/sdk/migrate/tunnels/#serve-new-named-hostnames).
