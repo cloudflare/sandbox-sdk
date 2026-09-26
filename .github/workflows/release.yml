@@ -20,7 +20,8 @@ concurrency:
 jobs:
   release:
     name: Release
-    if: github.repository == 'cloudflare/sandbox-sdk' && github.ref == 'refs/heads/main'
+    # A stable version releases only from main. A prerelease can release from any branch.
+    if: github.repository == 'cloudflare/sandbox-sdk' && (github.ref == 'refs/heads/main' || contains(inputs.version, '-'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -55,6 +56,19 @@ jobs:
             echo "::error::$PACKAGE@$VERSION is already on npm"
             exit 1
           fi
+          # A prerelease gets its prerelease name as the npm dist-tag: 1.0.0-rc.0 gets rc.
+          case "$VERSION" in
+            *-*)
+              dist_tag="${VERSION#*-}"
+              dist_tag="${dist_tag%%.*}"
+              if [[ ! "$dist_tag" =~ ^[a-z][a-z0-9-]*$ || "$dist_tag" == latest ]]; then
+                echo "::error::$VERSION needs a prerelease name to use as the npm dist-tag, such as rc in 1.0.0-rc.0"
+                exit 1
+              fi
+              ;;
+            *) dist_tag=latest ;;
+          esac
+          echo "DIST_TAG=$dist_tag" >> "$GITHUB_ENV"
 
       - run: npm ci --no-audit --no-fund
 
@@ -80,12 +94,7 @@ jobs:
             --file images/sandbox-tools/Dockerfile .
 
       - name: Publish to npm
-        run: |
-          case "$VERSION" in
-            *-*) dist_tag=next ;;
-            *) dist_tag=latest ;;
-          esac
-          npm publish --workspace packages/sandbox --provenance --access public --tag "$dist_tag"
+        run: npm publish --workspace packages/sandbox --provenance --access public --tag "$DIST_TAG"
 
       - name: Tag the release
         run: |
