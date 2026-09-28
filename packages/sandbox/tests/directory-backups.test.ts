@@ -132,6 +132,17 @@ function shimError(code: string, detail: string): Uint8Array[] {
   return message(JSON.stringify({ kind: "error", code, detail }));
 }
 
+describe("DirectoryBackups.intercept", () => {
+  it("routes the backups host to a gateway that refuses every request", async () => {
+    const { log, container, backups } = setup();
+
+    await backups.intercept();
+
+    expect(log).toEqual([`register ${HOST} deny`]);
+    expect(container.exec).not.toHaveBeenCalled();
+  });
+});
+
 describe("DirectoryBackups.backup", () => {
   it("grants after the lock, denies before closing stdin, then completes the upload", async () => {
     const { log, container, backups, controlKeys } = setup({ afterAcknowledgement: done() });

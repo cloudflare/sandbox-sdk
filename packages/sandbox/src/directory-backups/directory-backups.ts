@@ -91,6 +91,18 @@ export class DirectoryBackups {
   }
 
   /**
+   * Routes the Container's backup traffic to `DirectoryBackupGateway`, which refuses every
+   * request until an operation starts. Backups and restores do this themselves; call it only
+   * when the Durable Object also registers `interceptAllOutboundHttp()`, which takes every
+   * hostname registered after it. Call it right after starting the Container and before the
+   * catch-all, never while an operation may be running: it would replace that operation's
+   * grant. It does not start the Container.
+   */
+  intercept(): Promise<void> {
+    return this.#deny();
+  }
+
+  /**
    * Backs up `dir` and returns its record. Pause writers in `dir` first: files that change
    * while it's read are captured as they are at that moment.
    *
