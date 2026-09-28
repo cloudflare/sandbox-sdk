@@ -243,6 +243,12 @@ pub(super) fn mkdir_at(dir: RawFd, name: &CStr, mode: libc::mode_t) -> io::Resul
     check(unsafe { libc::mkdirat(dir, name.as_ptr(), mode) })
 }
 
+/// Removes the file, symlink, or (with `AT_REMOVEDIR`) empty directory `name` in `dir`.
+pub(super) fn unlink_at(dir: RawFd, name: &CStr, flags: libc::c_int) -> io::Result<()> {
+    // SAFETY: `name` is NUL-terminated.
+    check(unsafe { libc::unlinkat(dir, name.as_ptr(), flags) })
+}
+
 pub(super) fn symlink_at(target: &[u8], dir: RawFd, name: &CStr) -> io::Result<()> {
     let target = CString::new(target).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
     // SAFETY: both strings are NUL-terminated.

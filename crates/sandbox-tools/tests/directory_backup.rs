@@ -2,9 +2,11 @@
 //! gateway, the way the package drives it.
 
 use std::collections::BTreeMap;
+use std::ffi::CString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,6 +41,45 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A tmpfs mounted for one test and detached when dropped. Mounting needs a privileged
+/// container, so without one this returns `None` and the test skips, unless
+/// `SANDBOX_REQUIRE_MOUNTS` is set, as `npm run test:shim-mounts` sets it.
+struct Tmpfs(CString);
+
+impl Tmpfs {
+    fn mount(path: &Path) -> Option<Self> {
+        let target = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: every string is NUL-terminated, and tmpfs takes no data.
+        let result = unsafe {
+            libc::mount(
+                c"tmpfs".as_ptr(),
+                target.as_ptr(),
+                c"tmpfs".as_ptr(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if result == 0 {
+            return Some(Self(target));
+        }
+        let error = std::io::Error::last_os_error();
+        assert!(
+            std::env::var_os("SANDBOX_REQUIRE_MOUNTS").is_none(),
+            "cannot mount a tmpfs at {}: {error}",
+            path.display()
+        );
+        eprintln!("skipped: cannot mount a tmpfs ({error})");
+        None
+    }
+}
+
+impl Drop for Tmpfs {
+    fn drop(&mut self) {
+        // SAFETY: the path is NUL-terminated.
+        unsafe { libc::umount2(self.0.as_ptr(), libc::MNT_DETACH) };
     }
 }
 
@@ -380,6 +421,67 @@ fn a_missing_object_is_not_found() {
     assert_eq!(operation.close(), 0);
 
     assert!(matches!(frame, Frame::Data(value) if value["code"] == "notFound"));
+    assert!(siblings(&temp.0).is_empty());
+}
+
+// The swap would carry the mount into the replaced tree, and removing that tree would reach
+// the mounted files.
+#[test]
+fn refuses_a_target_with_a_mount_inside() {
+    let temp = TempDir::new();
+    let target = temp.0.join("target");
+    fs::create_dir_all(target.join("mnt")).unwrap();
+    let Some(_mount) = Tmpfs::mount(&target.join("mnt")) else {
+        return;
+    };
+    fs::write(target.join("mnt/remote.txt"), b"remote").unwrap();
+    let gateway = FakeGateway::start();
+
+    let operation = Operation::start(
+        "restore",
+        restore_request(&gateway, &target, 100, &"0".repeat(64)),
+    );
+
+    assert!(matches!(operation.frame(), Frame::FileError(libc::EBUSY)));
+    assert_eq!(operation.close(), 0);
+    assert_eq!(fs::read(target.join("mnt/remote.txt")).unwrap(), b"remote");
+}
+
+#[test]
+fn a_mount_made_during_a_restore_fails_it_before_the_swap() {
+    let temp = TempDir::new();
+    let source = temp.0.join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("new.txt"), b"new").unwrap();
+    let gateway = FakeGateway::start();
+    let done = backup(&gateway, &source, &[]);
+    let object = gateway.complete();
+    let target = temp.0.join("target");
+    fs::create_dir_all(target.join("mnt")).unwrap();
+    fs::write(target.join("old.txt"), b"old").unwrap();
+
+    let mut operation = Operation::start(
+        "restore",
+        restore_request(
+            &gateway,
+            &target,
+            object.len(),
+            done["sha256"].as_str().unwrap(),
+        ),
+    );
+    operation.expect_locked();
+    let Some(_mount) = Tmpfs::mount(&target.join("mnt")) else {
+        operation.close();
+        return;
+    };
+    fs::write(target.join("mnt/remote.txt"), b"remote").unwrap();
+    operation.acknowledge();
+    let frame = operation.frame();
+    assert_eq!(operation.close(), 0);
+
+    assert!(matches!(frame, Frame::FileError(libc::EBUSY)));
+    assert_eq!(fs::read(target.join("mnt/remote.txt")).unwrap(), b"remote");
+    assert_eq!(fs::read(target.join("old.txt")).unwrap(), b"old");
     assert!(siblings(&temp.0).is_empty());
 }
 

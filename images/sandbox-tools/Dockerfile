@@ -20,6 +20,12 @@ RUN cargo clippy --locked --package sandbox-tools --all-targets -- -D warnings
 RUN cargo test --locked --package sandbox-tools
 RUN touch /checks-passed
 
+# Reruns the tests with the tmpfs mounts that need a privileged container. Run it with
+# `npm run test:shim-mounts`.
+FROM check AS mounts
+ENV SANDBOX_REQUIRE_MOUNTS=1
+CMD ["cargo", "test", "--locked", "--package", "sandbox-tools"]
+
 FROM toolchain AS build
 RUN cargo rustc --release --locked --package sandbox-tools --bin sandbox-shim -- -C target-feature=+crt-static
 

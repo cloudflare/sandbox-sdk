@@ -141,8 +141,8 @@ export class DirectoryBackups {
    * need not.
    *
    * @throws {SandboxFileError} The target's parent is missing (`ENOENT`), the target isn't a
-   *   directory (`ENOTDIR`) or is a mount point (`EBUSY`), the swap fails (for example `EXDEV`),
-   *   or the disk fills (`ENOSPC`).
+   *   directory (`ENOTDIR`), is a mount point or has one inside it (`EBUSY`), the swap fails (for
+   *   example `EXDEV`), or the disk fills (`ENOSPC`).
    * @throws {SandboxBackupError} `BACKUP_NOT_FOUND`, `BACKUP_INTEGRITY`, or `BACKUP_TRANSFER`.
    */
   async restore(backup: DirectoryBackup, options: DirectoryRestoreOptions = {}): Promise<void> {

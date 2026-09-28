@@ -49,7 +49,7 @@ The unit tests in `packages/sandbox/tests` run in Node.js, not in workerd. They 
 3. The contract test, `packages/sandbox/tests/shim-contract.test.mjs`. It runs the real package code against the compiled shim through a stand-in for `exec()` that spawns local processes, so the Rust and TypeScript sides of the protocol are tested together.
 4. Checks that the binary is a 64-bit x86-64 ELF with no interpreter and no shared library dependencies.
 
-The Rust tests run inside the Linux build, so Linux-specific behavior is tested even on a Mac. Run `cargo test` on the host only for quick feedback.
+The Rust tests run inside the Linux build, so Linux-specific behavior is tested even on a Mac. Run `cargo test` on the host only for quick feedback. Tests that mount a tmpfs skip themselves in the build, which cannot mount; `npm run test:shim-mounts` reruns them in a privileged container.
 
 ## Before a release
 
@@ -58,6 +58,7 @@ The Rust tests run inside the Linux build, so Linux-specific behavior is tested 
 | Command                     | What it proves                                                                                                                                                     | Needs                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
 | `npm run test:package`      | The built package exports the expected runtime API. It also prints the files that `npm pack` would publish.                                                        | Nothing extra                 |
+| `npm run test:shim-mounts`  | The shim's tests pass with real mounts, including that a restore refuses a directory with a mount inside it and never deletes files inside a mount                 | Docker, privileged containers |
 | `npm run test:s3-e2e`       | `S3Gateway` authorizes, signs, and forwards the requests that a real `s3fs` sends to MinIO for reads, writes, renames, directories, multipart uploads, and deletes | Docker, privileged containers |
 | `npm run test:s3-lifecycle` | The shim mounts, reuses, inspects, denies, retries, and unmounts a real `s3fs` mount                                                                               | Docker, privileged containers |
 

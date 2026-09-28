@@ -1,6 +1,8 @@
 //! Reads the mount table from `/proc/self/mountinfo`.
 
+use std::fs;
 use std::io;
+use std::path::Path;
 
 pub(crate) const PATH: &str = "/proc/self/mountinfo";
 
@@ -9,6 +11,11 @@ pub(crate) struct MountEntry {
     pub(crate) mount_point: Vec<u8>,
     pub(crate) filesystem_type: String,
     pub(crate) source: String,
+}
+
+/// Reads and parses the mount table at `path`.
+pub(crate) fn read(path: &Path) -> io::Result<Vec<MountEntry>> {
+    parse(&fs::read(path)?)
 }
 
 /// Parses a mount table. A malformed table is `InvalidData`.
