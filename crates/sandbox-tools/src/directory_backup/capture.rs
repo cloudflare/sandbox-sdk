@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
-use super::sys::{self, Status};
+use super::sys::{self, MountId, Status};
 use super::{Failure, file_failure};
 
 /// Which paths under the directory to leave out.
@@ -116,7 +116,7 @@ enum Kind<'a> {
 struct Walk<'a, W: Write> {
     builder: tar::Builder<W>,
     selection: &'a Selection,
-    root_mount: (u32, u32, Option<u64>),
+    root_mount: MountId,
     links: HashMap<(u32, u32, u64), Vec<u8>>,
     aborted: &'a dyn Fn() -> bool,
 }

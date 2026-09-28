@@ -71,10 +71,13 @@ pub(super) struct Status {
     pub(super) nlink: u32,
     pub(super) ino: u64,
     pub(super) mtime: (i64, u32),
-    /// Device and, when the kernel reports it, mount ID. Two paths are on the same mount only
-    /// when both match, which also catches bind mounts from the same device.
-    pub(super) mount: (u32, u32, Option<u64>),
+    pub(super) mount: MountId,
 }
+
+/// Device and, when the kernel reports it, mount ID. Two paths are on the same mount only when
+/// both match, which also catches bind mounts from the same device. Kernels before 5.8 report no
+/// mount ID, so there only the devices are compared.
+pub(super) type MountId = (u32, u32, Option<u64>);
 
 impl Status {
     pub(super) fn file_type(&self) -> u32 {

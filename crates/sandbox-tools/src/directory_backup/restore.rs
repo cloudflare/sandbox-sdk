@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 
 use super::extract::Extractor;
 use super::lifeline::Lifeline;
+use super::sys::{self, MountId};
 use super::transfer::{self, Gateway, PART_SIZE, RangeReader};
-use super::{Failure, Session, absolute, file_failure, hex, sys};
+use super::{Failure, Session, absolute, file_failure, hex};
 use crate::mountinfo::{self, MountEntry};
 
 const SIBLING_PREFIX: &str = ".sandbox-restore-";
@@ -49,23 +50,20 @@ pub(super) fn restore<W: Write>(
     sibling.swap_in()
 }
 
-/// Device and mount ID, as `sys::Status` reports them.
-type Mount = (u32, u32, Option<u64>);
-
 /// The directory a restore replaces, checked before the operation waits for the lock.
 struct Target {
     path: PathBuf,
     parent: PathBuf,
     parent_fd: OwnedFd,
     /// The parent's mount, which removing a replaced tree never leaves.
-    mount: Mount,
+    mount: MountId,
     name: CString,
     exists: bool,
 }
 
 impl Target {
     /// The target need not exist, but its parent must, and an existing target must be a
-    /// directory on the parent's mount with no mount inside it.
+    /// directory with no mount at or inside it.
     fn inspect(dir: &str) -> Result<Self, Failure> {
         let path = absolute(dir)?;
         let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
@@ -84,19 +82,11 @@ impl Target {
             Err(error) if error.raw_os_error() == Some(libc::ENOENT) => None,
             Err(error) => return Err(target_failure(error)),
         };
-        if let Some(status) = &existing {
-            if status.file_type() != libc::S_IFDIR {
-                return Err(Failure::File {
-                    errno: libc::ENOTDIR,
-                    detail: format!("{}: not a directory", path.display()),
-                });
-            }
-            if status.mount != parent_status.mount {
-                return Err(Failure::File {
-                    errno: libc::EBUSY,
-                    detail: format!("{}: is a mount point", path.display()),
-                });
-            }
+        if existing.is_some_and(|status| status.file_type() != libc::S_IFDIR) {
+            return Err(Failure::File {
+                errno: libc::ENOTDIR,
+                detail: format!("{}: not a directory", path.display()),
+            });
         }
         let target = Self {
             parent: parent.to_path_buf(),
@@ -106,13 +96,13 @@ impl Target {
             name,
             exists: existing.is_some(),
         };
-        target.refuse_mounts_inside()?;
+        target.refuse_mounts()?;
         Ok(target)
     }
 
-    /// Refuses an existing target with a mount at or anywhere inside it. The exchange would carry the
-    /// mount into the replaced tree, out of the application's reach.
-    fn refuse_mounts_inside(&self) -> Result<(), Failure> {
+    /// Refuses an existing target with a mount at or inside it. The exchange would carry a
+    /// mount inside it into the replaced tree, out of the application's reach.
+    fn refuse_mounts(&self) -> Result<(), Failure> {
         if !self.exists {
             return Ok(());
         }
@@ -121,7 +111,7 @@ impl Target {
             Ok(Some(mount_point)) => Err(Failure::File {
                 errno: libc::EBUSY,
                 detail: format!(
-                    "{}: {} is mounted inside it",
+                    "{}: has a mount at {}",
                     self.path.display(),
                     String::from_utf8_lossy(&mount_point)
                 ),
@@ -135,25 +125,24 @@ impl Target {
         // The parent's path as the mount table spells it, with symlinks resolved.
         let dir = fs::read_link(fd_path(&self.parent_fd))?.join(OsStr::from_bytes(name.to_bytes()));
         let entries = mountinfo::read(Path::new(mountinfo::PATH))?;
-        Ok(mount_within(&entries, dir.as_os_str().as_bytes())
+        Ok(find_mount_within(&entries, dir.as_os_str().as_bytes())
             .map(|entry| entry.mount_point.clone()))
     }
 
-    /// Removes `name` in the parent without entering a mount. Without mount IDs, which kernels
-    /// before 5.8 do not report, a bind mount from the parent's filesystem has the parent's
-    /// device number, so only the mount table tells it apart: the tree stays when the table
-    /// lists a mount at or inside it, or cannot be read. A mount made after the table is read
-    /// can still be entered on such a kernel; making one takes `CAP_SYS_ADMIN`.
+    /// Removes `name` in the parent, unless the mount table lists a mount at or inside it or
+    /// cannot be read, and never enters another mount while removing. Without mount IDs a bind
+    /// mount from the parent's filesystem looks like the parent's mount, so on kernels before
+    /// 5.8 only the table protects it, and one made after the table is read can still be
+    /// entered. Making one takes `CAP_SYS_ADMIN`.
     fn remove(&self, name: &CStr) {
-        if self.mount.2.is_none() && !matches!(self.mount_within(name), Ok(None)) {
-            return;
+        if matches!(self.mount_within(name), Ok(None)) {
+            remove_at(self.parent_fd.as_raw_fd(), name, self.mount);
         }
-        remove_at(self.parent_fd.as_raw_fd(), name, self.mount);
     }
 }
 
 /// The first mount at `dir` or inside it.
-fn mount_within<'a>(entries: &'a [MountEntry], dir: &[u8]) -> Option<&'a MountEntry> {
+fn find_mount_within<'a>(entries: &'a [MountEntry], dir: &[u8]) -> Option<&'a MountEntry> {
     entries.iter().find(|entry| {
         entry
             .mount_point
@@ -192,10 +181,10 @@ impl<'a> Sibling<'a> {
 
     /// Swaps the sibling in: an exchange when the target exists, which leaves the old tree
     /// here to be removed, or a rename that refuses to replace one created meanwhile. A mount
-    /// made inside the target since it was inspected fails the restore instead.
+    /// made at or inside the target since it was inspected fails the restore instead.
     fn swap_in(self) -> Result<(), Failure> {
         let target = self.target;
-        target.refuse_mounts_inside()?;
+        target.refuse_mounts()?;
         let parent = target.parent_fd.as_raw_fd();
         let swapped = if target.exists {
             sys::exchange_at(parent, &self.name, &target.name)
@@ -265,7 +254,7 @@ fn sweep(target: &Target, prefix: &str) {
 /// Removes `name` in `parent` and everything beneath it that is on `mount`, without following
 /// symlinks. It never enters another mount, whose files belong to whatever mounted it, so a
 /// mount point and what it holds stay behind.
-fn remove_at(parent: RawFd, name: &CStr, mount: Mount) {
+fn remove_at(parent: RawFd, name: &CStr, mount: MountId) {
     let dir = match sys::open_directory_at(parent, name) {
         Ok(dir) => dir,
         Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP)) => {
@@ -274,12 +263,7 @@ fn remove_at(parent: RawFd, name: &CStr, mount: Mount) {
         }
         Err(_) => return,
     };
-    // Without a mount ID only the device can be compared, which `Target::remove` accounts for.
-    let on_mount = |status: sys::Status| match mount.2 {
-        Some(_) => status.mount == mount,
-        None => (status.mount.0, status.mount.1) == (mount.0, mount.1),
-    };
-    if !sys::fstatx(dir.as_raw_fd()).is_ok_and(on_mount) {
+    if !sys::fstatx(dir.as_raw_fd()).is_ok_and(|status| status.mount == mount) {
         return;
     }
     if let Ok(entries) = fs::read_dir(fd_path(&dir)) {
@@ -314,7 +298,7 @@ mod tests {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::symlink;
 
-    use super::{Target, mount_within, remove_at, sys};
+    use super::{Target, find_mount_within, remove_at, sys};
     use crate::mountinfo::MountEntry;
     use crate::test_support::{TempDir, TestMount};
 
@@ -336,7 +320,7 @@ mod tests {
             .collect();
 
         let within = |dir: &str| {
-            mount_within(&entries, dir.as_bytes()).map(|entry| entry.mount_point.clone())
+            find_mount_within(&entries, dir.as_bytes()).map(|entry| entry.mount_point.clone())
         };
 
         assert_eq!(within("/workspace"), Some(b"/workspace/a/b".to_vec()));
@@ -362,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn removing_a_tree_leaves_mounts_inside_it() {
+    fn removing_a_tree_never_enters_a_mount() {
         let temp = TempDir::new();
         let tree = temp.0.join("tree");
         fs::create_dir_all(tree.join("mnt")).unwrap();
@@ -378,38 +362,23 @@ mod tests {
         assert!(!tree.join("file").exists());
     }
 
-    // A bind mount from the same filesystem has the same device number, so only the mount ID,
-    // or the mount table where the kernel reports no mount ID, tells it apart.
+    // Without mount IDs, a bind mount from the same filesystem has the parent's device number,
+    // and only the mount table tells it apart.
     #[test]
-    fn removing_a_tree_leaves_bind_mounts_from_the_same_filesystem() {
-        for (mount_ids, mount_point) in [
-            (true, "tree/mnt"),
-            (true, "tree"),
-            (false, "tree/mnt"),
-            (false, "tree"),
-        ] {
+    fn the_mount_table_finds_bind_mounts_from_the_same_filesystem() {
+        for mount_point in ["tree", "tree/mnt"] {
             let temp = TempDir::new();
             fs::create_dir_all(temp.0.join("tree/mnt")).unwrap();
             fs::create_dir(temp.0.join("outside")).unwrap();
-            fs::write(temp.0.join("outside/keep"), b"keep").unwrap();
             let Some(_mount) = TestMount::bind(&temp.0.join("outside"), &temp.0.join(mount_point))
             else {
                 return;
             };
-            let mut target = Target::inspect(temp.0.join("new").to_str().unwrap()).unwrap();
-            if !mount_ids {
-                target.mount.2 = None;
-            } else if target.mount.2.is_none() {
-                continue;
-            }
+            let target = Target::inspect(temp.0.join("new").to_str().unwrap()).unwrap();
 
-            target.remove(c"tree");
+            let found = target.mount_within(c"tree").unwrap().unwrap();
 
-            assert_eq!(
-                fs::read(temp.0.join("outside/keep")).unwrap(),
-                b"keep",
-                "mount IDs: {mount_ids}, mounted at {mount_point}"
-            );
+            assert!(found.ends_with(mount_point.as_bytes()), "{mount_point}");
         }
     }
 }

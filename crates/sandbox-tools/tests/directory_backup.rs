@@ -47,10 +47,10 @@ impl Drop for TempDir {
 /// A tmpfs mounted for one test and detached when dropped. Mounting needs a privileged
 /// container, so without one this returns `None` and the test skips, unless
 /// `SANDBOX_REQUIRE_MOUNTS` is set, as `npm run test:shim-mounts` sets it.
-struct Tmpfs(CString);
+struct TestMount(CString);
 
-impl Tmpfs {
-    fn mount(path: &Path) -> Option<Self> {
+impl TestMount {
+    fn tmpfs(path: &Path) -> Option<Self> {
         let target = CString::new(path.as_os_str().as_bytes()).unwrap();
         // SAFETY: every string is NUL-terminated, and tmpfs takes no data.
         let result = unsafe {
@@ -76,7 +76,7 @@ impl Tmpfs {
     }
 }
 
-impl Drop for Tmpfs {
+impl Drop for TestMount {
     fn drop(&mut self) {
         // SAFETY: the path is NUL-terminated.
         unsafe { libc::umount2(self.0.as_ptr(), libc::MNT_DETACH) };
@@ -424,27 +424,33 @@ fn a_missing_object_is_not_found() {
     assert!(siblings(&temp.0).is_empty());
 }
 
-// The swap would carry the mount into the replaced tree, and removing that tree would reach
-// the mounted files.
+// The swap would carry a mount inside the target into the replaced tree, and removing that tree
+// would reach the mounted files.
 #[test]
-fn refuses_a_target_with_a_mount_inside() {
-    let temp = TempDir::new();
-    let target = temp.0.join("target");
-    fs::create_dir_all(target.join("mnt")).unwrap();
-    let Some(_mount) = Tmpfs::mount(&target.join("mnt")) else {
-        return;
-    };
-    fs::write(target.join("mnt/remote.txt"), b"remote").unwrap();
-    let gateway = FakeGateway::start();
+fn refuses_a_target_with_a_mount_at_or_inside_it() {
+    for mount_point in ["target", "target/mnt"] {
+        let temp = TempDir::new();
+        let target = temp.0.join("target");
+        fs::create_dir_all(target.join("mnt")).unwrap();
+        let Some(_mount) = TestMount::tmpfs(&temp.0.join(mount_point)) else {
+            return;
+        };
+        fs::write(temp.0.join(mount_point).join("remote.txt"), b"remote").unwrap();
+        let gateway = FakeGateway::start();
 
-    let operation = Operation::start(
-        "restore",
-        restore_request(&gateway, &target, 100, &"0".repeat(64)),
-    );
+        let operation = Operation::start(
+            "restore",
+            restore_request(&gateway, &target, 100, &"0".repeat(64)),
+        );
 
-    assert!(matches!(operation.frame(), Frame::FileError(libc::EBUSY)));
-    assert_eq!(operation.close(), 0);
-    assert_eq!(fs::read(target.join("mnt/remote.txt")).unwrap(), b"remote");
+        assert!(
+            matches!(operation.frame(), Frame::FileError(libc::EBUSY)),
+            "{mount_point}"
+        );
+        assert_eq!(operation.close(), 0);
+        let remote = fs::read(temp.0.join(mount_point).join("remote.txt")).unwrap();
+        assert_eq!(remote, b"remote");
+    }
 }
 
 #[test]
@@ -470,7 +476,7 @@ fn a_mount_made_during_a_restore_fails_it_before_the_swap() {
         ),
     );
     operation.expect_locked();
-    let Some(_mount) = Tmpfs::mount(&target.join("mnt")) else {
+    let Some(_mount) = TestMount::tmpfs(&target.join("mnt")) else {
         operation.close();
         return;
     };
