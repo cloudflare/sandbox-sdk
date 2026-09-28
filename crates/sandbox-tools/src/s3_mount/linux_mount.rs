@@ -11,20 +11,16 @@ use super::model::{
     Access, ControlError, FuseState, Marker, effective_bucket, fsname,
     overlaps_reserved_guest_path, route_host,
 };
+use crate::mountinfo;
 
 const MAX_LOG_DETAIL_BYTES: usize = 4 * 1024;
 
-#[derive(Clone, Debug)]
-pub(super) struct MountEntry {
-    pub(super) mount_point: Vec<u8>,
-    pub(super) filesystem_type: String,
-    pub(super) source: String,
-}
+pub(super) use crate::mountinfo::MountEntry;
 
 pub(super) fn read_mountinfo(path: &Path) -> Result<Vec<MountEntry>, ControlError> {
     let bytes = fs::read(path)
         .map_err(|error| ControlError::Failed(format!("cannot read mount table: {error}")))?;
-    parse_mountinfo(&bytes)
+    mountinfo::parse(&bytes).map_err(|error| ControlError::Protocol(error.to_string()))
 }
 
 pub(super) fn entries_at<'a>(entries: &'a [MountEntry], mount_path: &Path) -> Vec<&'a MountEntry> {
@@ -251,85 +247,11 @@ pub(super) fn normal_unmount(mount_path: &Path) -> Result<(), ControlError> {
     )))
 }
 
-fn parse_mountinfo(bytes: &[u8]) -> Result<Vec<MountEntry>, ControlError> {
-    let mut entries = Vec::new();
-    for line in bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-    {
-        let fields: Vec<&[u8]> = line.split(|byte| *byte == b' ').collect();
-        let separator = fields
-            .iter()
-            .position(|field| *field == b"-")
-            .ok_or_else(|| ControlError::Protocol("invalid mountinfo entry".into()))?;
-        if fields.len() <= separator + 2 || fields.len() <= 4 {
-            return Err(ControlError::Protocol("invalid mountinfo entry".into()));
-        }
-        entries.push(MountEntry {
-            mount_point: decode_mountinfo_field(fields[4])?,
-            filesystem_type: String::from_utf8_lossy(fields[separator + 1]).into_owned(),
-            source: String::from_utf8_lossy(fields[separator + 2]).into_owned(),
-        });
-    }
-    Ok(entries)
-}
-
-fn decode_mountinfo_field(field: &[u8]) -> Result<Vec<u8>, ControlError> {
-    let mut decoded = Vec::with_capacity(field.len());
-    let mut index = 0;
-    while index < field.len() {
-        if field[index] == b'\\' {
-            if index + 3 >= field.len()
-                || !(b'0'..=b'3').contains(&field[index + 1])
-                || !field[index + 2..=index + 3]
-                    .iter()
-                    .all(|byte| (b'0'..=b'7').contains(byte))
-            {
-                return Err(ControlError::Protocol(
-                    "invalid mountinfo path escape".into(),
-                ));
-            }
-            let value = (field[index + 1] - b'0') * 64
-                + (field[index + 2] - b'0') * 8
-                + (field[index + 3] - b'0');
-            decoded.push(value);
-            index += 4;
-        } else {
-            decoded.push(field[index]);
-            index += 1;
-        }
-    }
-    Ok(decoded)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
     use std::os::unix::fs::symlink;
-
-    #[test]
-    fn parses_mountinfo_and_decodes_paths() {
-        let entries = parse_mountinfo(
-            b"97 54 0:61 / /mnt/a\\040b rw,nosuid - fuse sandbox-s3-route-123 rw\n",
-        )
-        .unwrap();
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].mount_point, b"/mnt/a b");
-        assert_eq!(entries[0].filesystem_type, "fuse");
-        assert_eq!(entries[0].source, "sandbox-s3-route-123");
-    }
-
-    #[test]
-    fn rejects_invalid_mountinfo_escapes() {
-        let error = parse_mountinfo(b"97 54 0:61 / /mnt/a\\x rw - fuse source rw\n").unwrap_err();
-        assert!(matches!(error, ControlError::Protocol(_)));
-
-        let overflow =
-            parse_mountinfo(b"97 54 0:61 / /mnt/a\\777 rw - fuse source rw\n").unwrap_err();
-        assert!(matches!(overflow, ControlError::Protocol(_)));
-    }
 
     #[test]
     fn rejects_symlinks_before_creating_descendants() {

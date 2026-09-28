@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 pub(super) const CONTROL_ROOT: &str = "/run/sandbox/s3-mounts";
-pub(super) const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
+pub(super) const MOUNTINFO_PATH: &str = crate::mountinfo::PATH;
 
 const RESERVED_GUEST_PATHS: [&str; 3] =
     [MOUNTINFO_PATH, CONTROL_ROOT, "/usr/local/bin/sandbox-shim"];
