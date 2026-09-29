@@ -1,8 +1,8 @@
 # S3 mounts design
 
-This page explains how `S3Mounts` and `S3Gateway` work and why. For how to use them, see [Mount an R2 bucket](https://developers.cloudflare.com/sandbox/files/mount-an-r2-bucket/) and the [S3Mounts reference](https://developers.cloudflare.com/sandbox/reference/s3-mounts/). For the wire format between the package and the shim, see [Shim protocol](shim-protocol.md#s3-mount).
+This page explains how `S3Mount` and `S3Gateway` work and why. For how to use them, see [Mount an R2 bucket](https://developers.cloudflare.com/sandbox/files/mount-an-r2-bucket/) and the [S3Mount reference](https://developers.cloudflare.com/sandbox/reference/s3-mounts/). For the wire format between the package and the shim, see [Shim protocol](shim-protocol.md#s3-mount).
 
-The TypeScript side is `packages/sandbox/src/s3-mounts/`. The Rust side is `crates/sandbox-tools/src/s3_mount/`.
+The TypeScript side is `packages/sandbox/src/s3-mount/`. The Rust side is `crates/sandbox-tools/src/s3_mount/`.
 
 ## Credentials stay in the Worker
 
@@ -18,7 +18,7 @@ The container is one trust domain. Any process in it can use a mount's route, an
 
 ## The gateway allows known operations only
 
-`packages/sandbox/src/s3-mounts/gateway-policy.ts` accepts a request only when it matches one of the request shapes that `s3fs` sends. It checks the following before any credential is resolved:
+`packages/sandbox/src/s3-mount/gateway-policy.ts` accepts a request only when it matches one of the request shapes that `s3fs` sends. It checks the following before any credential is resolved:
 
 - The `Host` header is the mount's route hostname, and the path addresses the mount's bucket.
 - The method and query parameters match an allowed operation exactly. The allowed operations are: bucket `HEAD`, `GET ?location`, list objects version 1 and 2 with their known parameters, object `GET`, `HEAD`, `PUT`, and `DELETE`, and the multipart upload calls. A repeated parameter or an unknown one fails the check.

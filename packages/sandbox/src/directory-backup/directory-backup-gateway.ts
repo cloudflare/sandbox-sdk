@@ -6,7 +6,7 @@ import { handleDirectoryBackupRequest } from "./gateway.js";
 
 /**
  * Moves directory backups between a container and an R2 bucket binding. Export it from the
- * Worker and pass `ctx.exports.DirectoryBackupGateway` to `DirectoryBackups`.
+ * Worker and pass `ctx.exports.DirectoryBackupGateway` to `DirectoryBackup`.
  *
  * The container reaches `fetch()` through the outbound intercept and can only use the grant
  * its current operation holds. The other methods are for the Durable Object alone.

@@ -28,7 +28,7 @@ type S3MountContainer = Pick<Container, "exec" | "interceptOutboundHttp">;
  * monitors, or replaces it. The mounted path is not a POSIX filesystem. Do not
  * use it for locking or atomic rename.
  */
-export class S3Mounts {
+export class S3Mount {
   readonly #container: S3MountContainer;
   readonly #gateway: S3GatewayBinding;
 

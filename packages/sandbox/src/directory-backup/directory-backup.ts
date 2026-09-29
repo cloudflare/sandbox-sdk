@@ -4,12 +4,12 @@ import { backupError } from "../shared/errors.js";
 import { type OptionRules, validateOptions } from "../shared/options.js";
 import {
   DIRECTORY_BACKUP_FORMAT,
-  type DirectoryBackup,
   type DirectoryBackupDeleteOptions,
   type DirectoryBackupGatewayBinding,
   type DirectoryBackupGatewayControl,
   type DirectoryBackupGatewayProps,
   type DirectoryBackupOptions,
+  type DirectoryBackupRecord,
   type DirectoryBackupStorage,
   type DirectoryRestoreOptions,
 } from "./contracts.js";
@@ -66,7 +66,7 @@ const restoreDoneSchema = z.strictObject({ kind: z.literal("done") });
  * starts, retries, or times out anything. The application stores the returned records and
  * decides when to delete them.
  */
-export class DirectoryBackups {
+export class DirectoryBackup {
   readonly #container: DirectoryBackupContainer;
   readonly #gateway: DirectoryBackupGatewayBinding;
   readonly #binding: string;
@@ -111,7 +111,7 @@ export class DirectoryBackups {
    * @throws {SandboxBackupError} `BACKUP_TRANSFER` when a part upload fails, or
    *   `BACKUP_INTEGRITY` when R2 stored a different size than was uploaded.
    */
-  async backup(options: DirectoryBackupOptions): Promise<DirectoryBackup> {
+  async backup(options: DirectoryBackupOptions): Promise<DirectoryBackupRecord> {
     validateOptions(options, BACKUP_OPTIONS);
     if (options.dir === undefined) throw new TypeError("dir must be an absolute path without NUL");
     const { dir, name, signal } = options;
@@ -142,7 +142,7 @@ export class DirectoryBackups {
       size,
       sha256: done.sha256,
       format: DIRECTORY_BACKUP_FORMAT,
-    } satisfies DirectoryBackup;
+    } satisfies DirectoryBackupRecord;
     return name === undefined ? record : { ...record, name };
   }
 
@@ -157,7 +157,10 @@ export class DirectoryBackups {
    *   example `EXDEV`), or the disk fills (`ENOSPC`).
    * @throws {SandboxBackupError} `BACKUP_NOT_FOUND`, `BACKUP_INTEGRITY`, or `BACKUP_TRANSFER`.
    */
-  async restore(backup: DirectoryBackup, options: DirectoryRestoreOptions = {}): Promise<void> {
+  async restore(
+    backup: DirectoryBackupRecord,
+    options: DirectoryRestoreOptions = {},
+  ): Promise<void> {
     validateOptions(options, RESTORE_OPTIONS);
     const record = parseRecord(backup);
     const dir = options.dir ?? record.dir;
@@ -178,7 +181,10 @@ export class DirectoryBackups {
    * Deletes the backup's object. Needs no running Container. Deleting an object that is already
    * gone succeeds. A restore reading it at the same time fails, and nothing is swapped.
    */
-  async delete(backup: DirectoryBackup, options: DirectoryBackupDeleteOptions = {}): Promise<void> {
+  async delete(
+    backup: DirectoryBackupRecord,
+    options: DirectoryBackupDeleteOptions = {},
+  ): Promise<void> {
     validateOptions(options, DELETE_OPTIONS);
     const record = parseRecord(backup);
     options.signal?.throwIfAborted();
@@ -248,7 +254,7 @@ export class DirectoryBackups {
   }
 }
 
-function parseRecord(backup: DirectoryBackup): DirectoryBackup {
+function parseRecord(backup: DirectoryBackupRecord): DirectoryBackupRecord {
   const parsed = recordSchema.safeParse(backup);
   if (!parsed.success) {
     throw new TypeError(

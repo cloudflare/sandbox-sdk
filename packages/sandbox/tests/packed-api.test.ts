@@ -9,11 +9,11 @@ describe.skipIf(!existsSync(entry))("packed public API", () => {
     const sandbox = await import("../dist/index.mjs");
 
     expect(Object.keys(sandbox).sort()).toEqual([
+      "DirectoryBackup",
       "DirectoryBackupGateway",
-      "DirectoryBackups",
       "Files",
       "S3Gateway",
-      "S3Mounts",
+      "S3Mount",
       "SandboxBackupError",
       "SandboxFileError",
       "SandboxProtocolError",

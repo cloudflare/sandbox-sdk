@@ -1,7 +1,7 @@
 import {
   Files,
   type S3GatewayBinding,
-  S3Mounts,
+  S3Mount,
   SandboxFileError,
   SandboxProtocolError,
   SandboxS3MountError,
@@ -34,13 +34,13 @@ interface ArtifactSandboxState extends DurableObjectState {
 export class ArtifactSandbox extends DurableObject<Env> {
   readonly #container: Container;
   readonly #files: Files;
-  readonly #mounts: S3Mounts;
+  readonly #mounts: S3Mount;
 
   constructor(ctx: ArtifactSandboxState, env: Env) {
     super(ctx, env);
     this.#container = requireContainer(ctx);
     this.#files = new Files(this.#container);
-    this.#mounts = new S3Mounts(this.#container, ctx.exports.S3Gateway);
+    this.#mounts = new S3Mount(this.#container, ctx.exports.S3Gateway);
     // Each Durable Object instance must set its own timeout; it is not inherited.
     if (this.#container.running) {
       void ctx.blockConcurrencyWhile(() =>

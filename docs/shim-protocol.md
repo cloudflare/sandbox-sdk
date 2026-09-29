@@ -25,17 +25,17 @@ The package turns a file error into `SandboxFileError`, and anything malformed i
 
 ## Commands
 
-| Operation          | Arguments                                           | stdin                               | stdout               | stderr         |
-| ------------------ | --------------------------------------------------- | ----------------------------------- | -------------------- | -------------- |
-| `readFile`         | `read <PATH>`                                       | Not used                            | File bytes, unframed | Control frames |
-| `writeFile`        | `write <PATH>`                                      | File bytes, unframed                | Control frames       | Ignored        |
-| `stat`, `lstat`    | `stat <PATH>`, `lstat <PATH>`                       | Not used                            | One control frame    | Ignored        |
-| `readDirectory`    | `read-directory <PATH>`                             | Not used                            | One control frame    | Ignored        |
-| `mkdir`            | `mkdir <PATH> [--recursive]`                        | Not used                            | One control frame    | Ignored        |
-| `rename`           | `rename <SOURCE> <DESTINATION>`                     | Not used                            | One control frame    | Ignored        |
-| `remove`           | `remove <PATH> [--recursive] [--force]`             | Not used                            | One control frame    | Ignored        |
-| `S3Mounts`         | `s3-mount <mount\|inspect\|unmount> <ARGUMENT>`     | One byte, for `mount` and `unmount` | JSON in data frames  | Ignored        |
-| `DirectoryBackups` | `directory-backup <backup\|restore> <REQUEST_JSON>` | One byte, then close                | JSON in data frames  | Ignored        |
+| Operation         | Arguments                                           | stdin                               | stdout               | stderr         |
+| ----------------- | --------------------------------------------------- | ----------------------------------- | -------------------- | -------------- |
+| `readFile`        | `read <PATH>`                                       | Not used                            | File bytes, unframed | Control frames |
+| `writeFile`       | `write <PATH>`                                      | File bytes, unframed                | Control frames       | Ignored        |
+| `stat`, `lstat`   | `stat <PATH>`, `lstat <PATH>`                       | Not used                            | One control frame    | Ignored        |
+| `readDirectory`   | `read-directory <PATH>`                             | Not used                            | One control frame    | Ignored        |
+| `mkdir`           | `mkdir <PATH> [--recursive]`                        | Not used                            | One control frame    | Ignored        |
+| `rename`          | `rename <SOURCE> <DESTINATION>`                     | Not used                            | One control frame    | Ignored        |
+| `remove`          | `remove <PATH> [--recursive] [--force]`             | Not used                            | One control frame    | Ignored        |
+| `S3Mount`         | `s3-mount <mount\|inspect\|unmount> <ARGUMENT>`     | One byte, for `mount` and `unmount` | JSON in data frames  | Ignored        |
+| `DirectoryBackup` | `directory-backup <backup\|restore> <REQUEST_JSON>` | One byte, then close                | JSON in data frames  | Ignored        |
 
 The package sends only absolute paths. It joins a relative path onto the caller's `cwd`, and does not pass `cwd` to `exec()`. Linux resolves the joined path the same way as a relative path after entering `cwd`, including `..` after a symlink, and a missing `cwd` fails the operation with `ENOENT` for the path. A missing `cwd` given to `exec()` would instead fail to start the process, which looks the same as a missing shim binary. The shim does not change the path.
 
@@ -103,7 +103,7 @@ Each data frame carries one JSON envelope: `{"ok": true, "value": ...}` or `{"ok
 - `mount <REQUEST_JSON>` sends `{"kind": "route", "routeId": ...}` first. The package installs the outbound route for that ID and writes one byte, `1`, to stdin. The shim then starts or adopts the mount and sends a final envelope whose value is `null`.
 - `unmount <MOUNT_PATH>` sends `null` right away when nothing is mounted. Otherwise it sends the route first, the package replaces the route with a gateway that denies every request, and the shim unmounts after the acknowledgement byte.
 
-For `mount` and `unmount`, the shim holds a lock on the mount path for the whole exchange. `inspect` takes the lock only to read the guest state. For why mounts work this way, see [S3 mounts design](s3-mounts-design.md).
+For `mount` and `unmount`, the shim holds a lock on the mount path for the whole exchange. `inspect` takes the lock only to read the guest state. For why mounts work this way, see [S3 mounts design](s3-mount-design.md).
 
 ## `directory-backup`
 
@@ -120,7 +120,7 @@ Stdin is also the lifeline. When it closes before the shim has finished, because
 
 ## Cancellation and cleanup
 
-`DirectoryBackups` is the exception to the rest of this section: it never kills the shim, and an abort closes stdin instead, as described in [`directory-backup`](#directory-backup).
+`DirectoryBackup` is the exception to the rest of this section: it never kills the shim, and an abort closes stdin instead, as described in [`directory-backup`](#directory-backup).
 
 The package passes the caller's `AbortSignal` to `exec()`, which kills the shim, and rejects with the signal's reason. It stops following the signal once the operation finishes, because `AbortSignal.timeout()` can fire long after the call ends and signaling an exited process logs a runtime error.
 
@@ -132,7 +132,7 @@ The version byte catches a package and a shim from different releases. There is 
 
 Increase the version when an existing command changes its frames, payloads, or arguments in a way the other side would misread. A new command does not need a new version, because an old shim rejects an unknown command without sending a frame.
 
-Application images copy the shim from a donor image whose tag matches the package version, which keeps the two sides in step. `S3Mounts` and `DirectoryBackups` have separate version numbers for their gateway formats, and `DirectoryBackups` names its archive format in each record.
+Application images copy the shim from a donor image whose tag matches the package version, which keeps the two sides in step. `S3Mount` and `DirectoryBackup` have separate version numbers for their gateway formats, and `DirectoryBackup` names its archive format in each record.
 
 ## Add a file operation
 

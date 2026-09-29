@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { AwsClient } from "aws4fetch";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { S3Gateway, S3Mounts, type S3MountRequest } from "../src/index.js";
+import { S3Gateway, S3Mount, type S3MountRequest } from "../src/index.js";
 import { TestExecutionContext, TestFetcher } from "./worker-test-doubles.js";
 
 const runExecFile = promisify(execFile);
@@ -161,7 +161,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
       const gateway = new S3Gateway(new TestExecutionContext(options.props), {});
       return new GatewayFetcher(gateway);
     };
-    const mounts = new S3Mounts(container, gatewayBinding);
+    const mounts = new S3Mount(container, gatewayBinding);
     const request = {
       mountPath: "/mnt/models",
       source: {

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  type DirectoryBackup,
+  DirectoryBackup,
   type DirectoryBackupGatewayBinding,
-  DirectoryBackups,
+  type DirectoryBackupRecord,
   SandboxBackupError,
   SandboxFileError,
   SandboxProtocolError,
 } from "../src/index.js";
-import type { DirectoryBackupGatewayProps } from "../src/directory-backups/contracts.js";
+import type { DirectoryBackupGatewayProps } from "../src/directory-backup/contracts.js";
 import { dataFrame, deferred, encoder, errorFrame } from "./helpers.js";
 import { TestFetcher } from "./worker-test-doubles.js";
 
@@ -108,14 +108,14 @@ function setup(
       log.push(`register ${host} ${props?.mode ?? "?"}${key}`);
     }),
   };
-  const backups = new DirectoryBackups(container, gateway, {
+  const backups = new DirectoryBackup(container, gateway, {
     binding: "BACKUPS",
     prefix: "backups/",
   });
   return { log, shim, container, backups, controlKeys };
 }
 
-const record: DirectoryBackup = {
+const record: DirectoryBackupRecord = {
   id: "0b8f6a2e-5c1d-4e7a-9f3b-2d4c6e8a0b1c",
   dir: "/workspace",
   size: 10,
@@ -132,7 +132,7 @@ function shimError(code: string, detail: string): Uint8Array[] {
   return message(JSON.stringify({ kind: "error", code, detail }));
 }
 
-describe("DirectoryBackups.intercept", () => {
+describe("DirectoryBackup.intercept", () => {
   it("routes the backups host to a gateway that refuses every request", async () => {
     const { log, container, backups } = setup();
 
@@ -143,7 +143,7 @@ describe("DirectoryBackups.intercept", () => {
   });
 });
 
-describe("DirectoryBackups.backup", () => {
+describe("DirectoryBackup.backup", () => {
   it("grants after the lock, denies before closing stdin, then completes the upload", async () => {
     const { log, container, backups, controlKeys } = setup({ afterAcknowledgement: done() });
 
@@ -289,7 +289,7 @@ describe("DirectoryBackups.backup", () => {
   });
 });
 
-describe("DirectoryBackups.restore", () => {
+describe("DirectoryBackup.restore", () => {
   it("grants a read of the record's object and restores into another directory", async () => {
     const { log, container, backups } = setup({
       afterAcknowledgement: message(JSON.stringify({ kind: "done" })),
@@ -335,7 +335,7 @@ describe("DirectoryBackups.restore", () => {
   });
 });
 
-describe("DirectoryBackups.delete", () => {
+describe("DirectoryBackup.delete", () => {
   it("deletes the object with a control call and no container", async () => {
     const { log, container, backups, controlKeys } = setup();
 
@@ -347,14 +347,14 @@ describe("DirectoryBackups.delete", () => {
   });
 });
 
-describe("DirectoryBackups storage", () => {
+describe("DirectoryBackup storage", () => {
   it("requires a binding name and a slash-terminated prefix", () => {
     const { container } = setup();
     const gateway: DirectoryBackupGatewayBinding = vi.fn();
 
-    expect(() => new DirectoryBackups(container, gateway, { binding: "" })).toThrow(TypeError);
+    expect(() => new DirectoryBackup(container, gateway, { binding: "" })).toThrow(TypeError);
     expect(
-      () => new DirectoryBackups(container, gateway, { binding: "BACKUPS", prefix: "backups" }),
+      () => new DirectoryBackup(container, gateway, { binding: "BACKUPS", prefix: "backups" }),
     ).toThrow('storage.prefix must be a string that ends in "/"');
   });
 });

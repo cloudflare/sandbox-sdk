@@ -1,4 +1,4 @@
-import type { BackupBucket } from "../src/directory-backups/gateway.js";
+import type { BackupBucket } from "../src/directory-backup/gateway.js";
 
 interface StoredObject {
   readonly bytes: Uint8Array;

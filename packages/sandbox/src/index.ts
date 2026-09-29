@@ -1,13 +1,13 @@
 export type {
-  DirectoryBackup,
   DirectoryBackupDeleteOptions,
   DirectoryBackupGatewayBinding,
   DirectoryBackupOptions,
+  DirectoryBackupRecord,
   DirectoryBackupStorage,
   DirectoryRestoreOptions,
-} from "./directory-backups/contracts.js";
-export { DirectoryBackupGateway } from "./directory-backups/directory-backup-gateway.js";
-export { DirectoryBackups } from "./directory-backups/directory-backups.js";
+} from "./directory-backup/contracts.js";
+export { DirectoryBackupGateway } from "./directory-backup/directory-backup-gateway.js";
+export { DirectoryBackup } from "./directory-backup/directory-backup.js";
 export type { FileContent } from "./files/content.js";
 export type { SandboxFileType } from "./files/file-type.js";
 export type { FileOperationOptions, MkdirOptions, RemoveOptions } from "./files/files.js";
@@ -19,9 +19,9 @@ export type {
   S3MountInspection,
   S3MountOperationOptions,
   S3MountRequest,
-} from "./s3-mounts/contracts.js";
-export { S3Gateway } from "./s3-mounts/s3-gateway.js";
-export { S3Mounts } from "./s3-mounts/s3-mounts.js";
+} from "./s3-mount/contracts.js";
+export { S3Gateway } from "./s3-mount/s3-gateway.js";
+export { S3Mount } from "./s3-mount/s3-mount.js";
 export {
   SandboxBackupError,
   SandboxFileError,

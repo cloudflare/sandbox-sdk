@@ -7,8 +7,8 @@ import { AwsClient } from "aws4fetch";
 import * as z from "zod/mini";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { type ActiveS3GatewayProps } from "../src/s3-mounts/contracts.js";
-import { handleS3GatewayRequest } from "../src/s3-mounts/gateway.js";
+import { type ActiveS3GatewayProps } from "../src/s3-mount/contracts.js";
+import { handleS3GatewayRequest } from "../src/s3-mount/gateway.js";
 
 const run = promisify(execFile);
 const addressSchema = z.object({ port: z.number().check(z.int(), z.positive()) });

@@ -1,6 +1,6 @@
 # Backup workspace
 
-Deploy this Worker to back up a directory in a named Container to R2 with `DirectoryBackups`, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. The archive streams to R2 in parallel parts and never lands on the Container's disk.
+Deploy this Worker to back up a directory in a named Container to R2 with `DirectoryBackup`, and restore it into the same Container or a new one. Backups can leave out files by pattern or by `.gitignore` rules, and an alarm deletes each backup when its time to live ends. The archive streams to R2 in parallel parts and never lands on the Container's disk.
 
 Done when a directory restored from R2 matches the backup, after its Container was reset.
 

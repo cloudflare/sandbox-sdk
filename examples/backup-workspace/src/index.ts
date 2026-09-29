@@ -1,7 +1,7 @@
 import {
-  type DirectoryBackup,
+  DirectoryBackup,
   type DirectoryBackupGatewayBinding,
-  DirectoryBackups,
+  type DirectoryBackupRecord,
   SandboxBackupError,
   SandboxFileError,
 } from "@cloudflare/sandbox";
@@ -55,22 +55,22 @@ interface BackupSandboxState extends DurableObjectState {
   };
 }
 
-// The record DirectoryBackups returns, with the expiry this example adds.
+// The record DirectoryBackup returns, with the expiry this example adds.
 interface StoredBackup {
-  backup: DirectoryBackup;
+  backup: DirectoryBackupRecord;
   createdAt: string;
   expiresAt: string;
 }
 
 export class BackupSandbox extends DurableObject<Env> {
   readonly #container: Container;
-  readonly #backups: DirectoryBackups;
+  readonly #backups: DirectoryBackup;
 
   constructor(ctx: BackupSandboxState, env: Env) {
     super(ctx, env);
     this.#container = requireContainer(ctx);
     // Each Durable Object keeps its own records, so every sandbox can share one prefix.
-    this.#backups = new DirectoryBackups(this.#container, ctx.exports.DirectoryBackupGateway, {
+    this.#backups = new DirectoryBackup(this.#container, ctx.exports.DirectoryBackupGateway, {
       binding: "BACKUPS",
       prefix: "backups/",
     });

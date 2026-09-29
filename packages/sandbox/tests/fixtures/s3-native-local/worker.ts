@@ -1,7 +1,7 @@
 import {
   Files,
   type S3GatewayBinding,
-  S3Mounts,
+  S3Mount,
   type S3MountInspection,
   type S3MountRequest,
 } from "@cloudflare/sandbox";
@@ -32,14 +32,14 @@ interface S3NativeLocalState extends DurableObjectState {
 export class S3NativeLocalSandbox extends DurableObject<S3NativeLocalEnv> {
   readonly #container: Container;
   readonly #files: Files;
-  readonly #mounts: S3Mounts;
+  readonly #mounts: S3Mount;
 
   constructor(ctx: S3NativeLocalState, env: S3NativeLocalEnv) {
     super(ctx, env);
     if (ctx.container === undefined) throw new Error("Container attachment is unavailable");
     this.#container = ctx.container;
     this.#files = new Files(this.#container);
-    this.#mounts = new S3Mounts(this.#container, ctx.exports.S3Gateway);
+    this.#mounts = new S3Mount(this.#container, ctx.exports.S3Gateway);
   }
 
   async mount(configuration: MountConfiguration): Promise<S3MountInspection> {

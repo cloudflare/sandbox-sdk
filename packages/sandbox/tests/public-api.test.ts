@@ -2,9 +2,9 @@ import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 
 import * as sandbox from "../src/index.js";
 import type {
-  DirectoryBackup,
   DirectoryBackupGatewayBinding,
   DirectoryBackupOperation,
+  DirectoryBackupRecord,
   S3GatewayBinding,
   S3MountOperation,
   S3MountOperationOptions,
@@ -15,11 +15,11 @@ import type {
 describe("public API", () => {
   it("exports the supported filesystem APIs and error recognizers", () => {
     expect(Object.keys(sandbox).sort()).toEqual([
+      "DirectoryBackup",
       "DirectoryBackupGateway",
-      "DirectoryBackups",
       "Files",
       "S3Gateway",
-      "S3Mounts",
+      "S3Mount",
       "SandboxBackupError",
       "SandboxFileError",
       "SandboxProtocolError",
@@ -29,7 +29,7 @@ describe("public API", () => {
 
   it("exports the directory backup record and error types", () => {
     expectTypeOf<DirectoryBackupGatewayBinding>().toBeFunction();
-    expectTypeOf<DirectoryBackup>().toEqualTypeOf<{
+    expectTypeOf<DirectoryBackupRecord>().toEqualTypeOf<{
       readonly id: string;
       readonly dir: string;
       readonly size: number;

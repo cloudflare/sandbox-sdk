@@ -5,7 +5,7 @@ export const DIRECTORY_BACKUP_FORMAT = "tar+zstd/1";
  * A saved directory. A plain, serializable object: store it wherever the application keeps
  * state. It only works with the same R2 binding and key prefix that created it.
  */
-export interface DirectoryBackup {
+export interface DirectoryBackupRecord {
   /** UUID. The object key is `<prefix><id>.tar.zst`. */
   readonly id: string;
   /** The directory the backup came from, and the default restore target. */

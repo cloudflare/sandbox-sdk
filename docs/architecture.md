@@ -9,8 +9,8 @@ An application defines a Durable Object class with a container. Each sandbox nam
 `@cloudflare/sandbox` adds three things that the platform does not provide:
 
 - `Files`, structured file operations with Linux errors.
-- `S3Mounts` and `S3Gateway`, S3 buckets mounted as directories, with credentials that stay in the Worker.
-- `DirectoryBackups` and `DirectoryBackupGateway`, a directory saved to R2 and restored into any Container, including one on a newer image.
+- `S3Mount` and `S3Gateway`, S3 buckets mounted as directories, with credentials that stay in the Worker.
+- `DirectoryBackup` and `DirectoryBackupGateway`, a directory saved to R2 and restored into any Container, including one on a newer image.
 
 Everything else is application code. The package does not start, stop, wake, or destroy containers, and it has no `Sandbox` base class for applications to extend.
 
@@ -65,9 +65,9 @@ A new export has to pass two tests:
 - The deletion test: without it, every application would have to rebuild substantial, reusable machinery. A thin wrapper over a platform API fails this test.
 - The publication test: its contract can be frozen without freezing application policy.
 
-`S3Mounts` passes both. It hides FUSE setup, per-mount outbound routes, request signing, operation-level authorization, and recovery of mounts that outlive a Durable Object instance.
+`S3Mount` passes both. It hides FUSE setup, per-mount outbound routes, request signing, operation-level authorization, and recovery of mounts that outlive a Durable Object instance.
 
-`DirectoryBackups` passes both too. It hides a streaming archive format, parallel multipart transfer that never lands on the Container's disk, a per-operation R2 grant, verified extraction beside the target, and an atomic swap. The records are plain data, so storing and expiring them stays with the application.
+`DirectoryBackup` passes both too. It hides a streaming archive format, parallel multipart transfer that never lands on the Container's disk, a per-operation R2 grant, verified extraction beside the target, and an atomic swap. The records are plain data, so storing and expiring them stays with the application.
 
 Several candidates failed and became examples or platform requests instead:
 
@@ -77,6 +77,8 @@ Several candidates failed and became examples or platform requests instead:
 - Live terminals. `exec()` with `pty` already provides the terminal. Reconnecting and flow control are application choices.
 
 The public surface is `packages/sandbox/src/index.ts`. `packages/sandbox/tests/public-api.test.ts` lists the runtime exports and checks several exported types, and `packed-api.test.ts` checks the runtime exports of the built package. Update them in the same change as the surface.
+
+Name a new class for the capability, in the singular, as the platform does with `ctx.container` and `ctx.storage`: `S3Mount` manages every mount in a container, and `DirectoryBackup` every backup. `Files` is plural only because `File` is a global Web API class.
 
 ## Examples
 

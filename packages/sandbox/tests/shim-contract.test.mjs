@@ -17,10 +17,10 @@ import { Readable, Writable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { DirectoryBackupGateway } from "../src/directory-backups/directory-backup-gateway.js";
-import { DirectoryBackups } from "../src/directory-backups/directory-backups.js";
+import { DirectoryBackupGateway } from "../src/directory-backup/directory-backup-gateway.js";
+import { DirectoryBackup } from "../src/directory-backup/directory-backup.js";
 import { Files } from "../src/files/files.js";
-import { S3Mounts } from "../src/s3-mounts/s3-mounts.js";
+import { S3Mount } from "../src/s3-mount/s3-mount.js";
 import { SandboxBackupError } from "../src/shared/errors.js";
 import { FixedLengthStreamDouble, R2BucketDouble } from "./r2-bucket-double.js";
 import { TestExecutionContext } from "./worker-test-doubles.js";
@@ -276,7 +276,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     try {
       const container = nativeContainer();
       const gateway = () => ({ fetch() {} });
-      const mounts = new S3Mounts(container, gateway);
+      const mounts = new S3Mount(container, gateway);
 
       await expect(mounts.inspect(directory)).resolves.toEqual({
         mountPath: directory,
@@ -293,7 +293,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     const markerName = `${createHash("sha256").update(directory).digest("hex")}.json`;
     const markerPath = join("/run/sandbox/s3-mounts/markers", markerName);
-    const mounts = new S3Mounts(nativeContainer(), () => ({ fetch() {} }));
+    const mounts = new S3Mount(nativeContainer(), () => ({ fetch() {} }));
     try {
       await nativeMkdir("/run/sandbox/s3-mounts/markers", { recursive: true });
       await writeFile(
@@ -479,7 +479,7 @@ async function backupPlatform() {
   return {
     bucket,
     registrations,
-    backups: new DirectoryBackups(container, binding, { binding: "BACKUPS", prefix: "backups/" }),
+    backups: new DirectoryBackup(container, binding, { binding: "BACKUPS", prefix: "backups/" }),
     close: () =>
       new Promise((resolve) => {
         server.close(resolve);

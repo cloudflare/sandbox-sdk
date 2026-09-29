@@ -4,10 +4,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   SandboxProtocolError,
   SandboxS3MountError,
-  S3Mounts,
+  S3Mount,
   type S3MountRequest,
 } from "../src/index.js";
-import type { S3GatewayBinding, S3MountObservedConfiguration } from "../src/s3-mounts/contracts.js";
+import type { S3GatewayBinding, S3MountObservedConfiguration } from "../src/s3-mount/contracts.js";
 import {
   commandProcess,
   dataFrame,
@@ -144,7 +144,7 @@ function parseGuestRequest(command: string[]) {
   return guestRequestSchema.parse(JSON.parse(command[3] ?? ""));
 }
 
-describe("S3Mounts", () => {
+describe("S3Mount", () => {
   it("installs the route selected by one interactive shim operation", async () => {
     const writes: Uint8Array[] = [];
     const container = containerWithResponses(
@@ -152,7 +152,7 @@ describe("S3Mounts", () => {
     );
     const gateway = gatewayBinding();
 
-    await new S3Mounts(container, gateway.factory).mount(request);
+    await new S3Mount(container, gateway.factory).mount(request);
 
     expect(container.exec).toHaveBeenCalledTimes(1);
     const [command, options] = firstExecCall(container);
@@ -187,7 +187,7 @@ describe("S3Mounts", () => {
   it("canonicalizes only the trailing key-prefix separator", async () => {
     const container = containerWithResponses(routeProcess("route-123"));
 
-    await new S3Mounts(container, gatewayBinding().factory).mount({
+    await new S3Mount(container, gatewayBinding().factory).mount({
       ...request,
       keyPrefix: "Models//Δ data/%2F",
     });
@@ -200,7 +200,7 @@ describe("S3Mounts", () => {
   it("uses a route chosen from guest state instead of the candidate route", async () => {
     const container = containerWithResponses(routeProcess("existing-route"));
 
-    await new S3Mounts(container, gatewayBinding().factory).mount(request);
+    await new S3Mount(container, gatewayBinding().factory).mount(request);
 
     const [command] = firstExecCall(container);
     const guestRequest = parseGuestRequest(command);
@@ -215,7 +215,7 @@ describe("S3Mounts", () => {
       errorResponse("conflict", "a different configuration occupies the path"),
     );
 
-    const error = await new S3Mounts(container, gatewayBinding().factory)
+    const error = await new S3Mount(container, gatewayBinding().factory)
       .mount(request)
       .catch((cause: unknown) => cause);
 
@@ -234,7 +234,7 @@ describe("S3Mounts", () => {
     );
 
     await expect(
-      new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models"),
+      new S3Mount(container, gatewayBinding().factory).inspect("/mnt/models"),
     ).resolves.toEqual({
       mountPath: "/mnt/models",
       attachment: { status: "managed", configuration },
@@ -264,7 +264,7 @@ describe("S3Mounts", () => {
     const controller = new AbortController();
     const reason = new Error("inspection deadline reached");
 
-    const inspection = new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models", {
+    const inspection = new S3Mount(container, gatewayBinding().factory).inspect("/mnt/models", {
       signal: controller.signal,
     });
     await vi.waitFor(() => expect(container.exec).toHaveBeenCalledOnce());
@@ -296,7 +296,7 @@ describe("S3Mounts", () => {
     for (const testCase of cases) {
       const container = containerWithResponses(inspectionProcess(testCase.state));
       await expect(
-        new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models"),
+        new S3Mount(container, gatewayBinding().factory).inspect("/mnt/models"),
       ).resolves.toEqual(testCase.expected);
     }
   });
@@ -336,7 +336,7 @@ describe("S3Mounts", () => {
       };
       const container = containerWithResponses(inspectionProcess(state, testCase.wire));
       await expect(
-        new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models"),
+        new S3Mount(container, gatewayBinding().factory).inspect("/mnt/models"),
       ).resolves.toMatchObject({ fuse: testCase.fuse, gateway: testCase.gateway });
     }
   });
@@ -361,7 +361,7 @@ describe("S3Mounts", () => {
     );
 
     await expect(
-      new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models"),
+      new S3Mount(container, gatewayBinding().factory).inspect("/mnt/models"),
     ).resolves.toEqual({
       mountPath: "/mnt/models",
       attachment: { status: "stale", configuration: alternateConfiguration },
@@ -374,7 +374,7 @@ describe("S3Mounts", () => {
       interactiveCommandProcess(response(null)),
       interactiveCommandProcess(response(null)),
     );
-    const mounts = new S3Mounts(container, gatewayBinding().factory);
+    const mounts = new S3Mount(container, gatewayBinding().factory);
 
     await mounts.unmount("/mnt/models");
     await mounts.unmount("/mnt/models");
@@ -391,7 +391,7 @@ describe("S3Mounts", () => {
     ]);
     const container = containerWithResponses(process);
 
-    const error = await new S3Mounts(container, gateway.factory)
+    const error = await new S3Mount(container, gateway.factory)
       .unmount("/mnt/models")
       .catch((cause: unknown) => cause);
 
@@ -428,7 +428,7 @@ describe("S3Mounts", () => {
     const container = containerWithResponses(process);
     const gateway = gatewayBinding();
 
-    const error = await new S3Mounts(container, gateway.factory)
+    const error = await new S3Mount(container, gateway.factory)
       .unmount("/mnt/models")
       .catch((cause: unknown) => cause);
 
@@ -448,7 +448,7 @@ describe("S3Mounts", () => {
     container.interceptOutboundHttp.mockRejectedValue(failure);
 
     await expect(
-      new S3Mounts(container, gatewayBinding().factory).unmount("/mnt/models"),
+      new S3Mount(container, gatewayBinding().factory).unmount("/mnt/models"),
     ).rejects.toBe(failure);
 
     expect(container.exec).toHaveBeenCalledOnce();
@@ -463,7 +463,7 @@ describe("S3Mounts", () => {
       exec: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
       interceptOutboundHttp: vi.fn().mockResolvedValue(undefined),
     };
-    const mounts = new S3Mounts(container, gatewayBinding().factory);
+    const mounts = new S3Mount(container, gatewayBinding().factory);
 
     const firstUnmount = mounts.unmount("/mnt/models");
     const secondUnmount = mounts.unmount("/mnt/models");
@@ -480,7 +480,7 @@ describe("S3Mounts", () => {
       inspectionProcess({ kind: "absent" }),
       interactiveCommandProcess(response(null)),
     );
-    const mounts = new S3Mounts(container, gatewayBinding().factory);
+    const mounts = new S3Mount(container, gatewayBinding().factory);
 
     await expect(mounts.inspect("/run/sandbox")).resolves.toEqual({
       mountPath: "/run/sandbox",
@@ -495,7 +495,7 @@ describe("S3Mounts", () => {
 
   it("rejects invalid paths and package-owned s3fs options before entering the Container", async () => {
     const container = containerWithResponses();
-    const mounts = new S3Mounts(container, gatewayBinding().factory);
+    const mounts = new S3Mount(container, gatewayBinding().factory);
 
     await expect(mounts.inspect("relative/path")).rejects.toBeInstanceOf(TypeError);
     await expect(
@@ -525,7 +525,7 @@ describe("S3Mounts", () => {
       exec: vi.fn().mockRejectedValue(execError),
       interceptOutboundHttp: vi.fn(),
     };
-    await expect(new S3Mounts(execContainer, gatewayBinding().factory).mount(request)).rejects.toBe(
+    await expect(new S3Mount(execContainer, gatewayBinding().factory).mount(request)).rejects.toBe(
       execError,
     );
 
@@ -535,9 +535,9 @@ describe("S3Mounts", () => {
       exec: vi.fn().mockResolvedValue(process),
       interceptOutboundHttp: vi.fn().mockRejectedValue(routeError),
     };
-    await expect(
-      new S3Mounts(routeContainer, gatewayBinding().factory).mount(request),
-    ).rejects.toBe(routeError);
+    await expect(new S3Mount(routeContainer, gatewayBinding().factory).mount(request)).rejects.toBe(
+      routeError,
+    );
     expect(process.kill).toHaveBeenCalledWith(9);
   });
 
@@ -549,7 +549,7 @@ describe("S3Mounts", () => {
     const container = containerWithResponses(process);
     const gateway = gatewayBinding();
 
-    const error = await new S3Mounts(container, gateway.factory)
+    const error = await new S3Mount(container, gateway.factory)
       .mount(request)
       .catch((cause: unknown) => cause);
 
@@ -581,7 +581,7 @@ describe("S3Mounts", () => {
     const gateway = gatewayBinding();
     const controller = new AbortController();
     const reason = new Error("cancel route installation");
-    const mounting = new S3Mounts(container, gateway.factory).mount(request, {
+    const mounting = new S3Mount(container, gateway.factory).mount(request, {
       signal: controller.signal,
     });
     await vi.waitFor(() => expect(container.interceptOutboundHttp).toHaveBeenCalledOnce());
@@ -607,7 +607,7 @@ describe("S3Mounts", () => {
     ]);
     const container = containerWithResponses(process);
 
-    const error = await new S3Mounts(container, gatewayBinding().factory)
+    const error = await new S3Mount(container, gatewayBinding().factory)
       .mount(request)
       .catch((cause: unknown) => cause);
 
@@ -618,7 +618,7 @@ describe("S3Mounts", () => {
   it("throws SandboxProtocolError for undecodable inspection data", async () => {
     const container = containerWithResponses(commandProcess(response({ attachment: 1 })));
 
-    const error = await new S3Mounts(container, gatewayBinding().factory)
+    const error = await new S3Mount(container, gatewayBinding().factory)
       .inspect("/mnt/models")
       .catch((cause: unknown) => cause);
 

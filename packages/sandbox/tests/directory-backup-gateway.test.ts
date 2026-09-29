@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { DirectoryBackupGatewayProps } from "../src/directory-backups/contracts.js";
-import { DirectoryBackupGateway } from "../src/directory-backups/directory-backup-gateway.js";
+import type { DirectoryBackupGatewayProps } from "../src/directory-backup/contracts.js";
+import { DirectoryBackupGateway } from "../src/directory-backup/directory-backup-gateway.js";
 import { FixedLengthStreamDouble, R2BucketDouble } from "./r2-bucket-double.js";
 import { TestExecutionContext } from "./worker-test-doubles.js";
 

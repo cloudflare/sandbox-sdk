@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { handleS3GatewayRequest } from "../src/s3-mounts/gateway.js";
-import { type ActiveS3GatewayProps } from "../src/s3-mounts/contracts.js";
-import { S3Gateway } from "../src/s3-mounts/s3-gateway.js";
+import { handleS3GatewayRequest } from "../src/s3-mount/gateway.js";
+import { type ActiveS3GatewayProps } from "../src/s3-mount/contracts.js";
+import { S3Gateway } from "../src/s3-mount/s3-gateway.js";
 import { TestExecutionContext } from "./worker-test-doubles.js";
 
 type S3GatewayProps = ActiveS3GatewayProps;
