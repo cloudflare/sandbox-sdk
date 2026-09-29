@@ -50,7 +50,7 @@ Restore the backup into a new Container. Pass `{"dir": "/workspace/other"}` to r
 curl --request POST "$WORKER_URL/sandboxes/agent-1/backups/$BACKUP_ID/restore"
 ```
 
-Restoring replaces the directory: files that are not in the backup are gone. The restore unpacks beside the directory and swaps it in only after the archive checks out, so a failed restore leaves the directory as it was. `/workspace/app/index.js` is back, and `node_modules` is not. Delete the backup when you no longer need it:
+Restoring replaces the directory: files that are not in the backup are gone. The restore unpacks beside the directory and swaps it in only after the archive checks out, so a download that fails its checks leaves the directory as it was. `/workspace/app/index.js` is back, and `node_modules` is not. Delete the backup when you no longer need it:
 
 ```sh
 curl --request DELETE "$WORKER_URL/sandboxes/agent-1/backups/$BACKUP_ID"

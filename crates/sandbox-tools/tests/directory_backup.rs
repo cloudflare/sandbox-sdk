@@ -224,10 +224,11 @@ impl Operation {
             .expect("the shim should send a frame")
     }
 
-    fn expect_locked(&mut self) {
+    /// Expects a frame that carries nothing but `kind`, such as `locked` or `verified`.
+    fn expect(&self, kind: &str) {
         match self.frame() {
-            Frame::Data(value) if value == json!({ "kind": "locked" }) => {}
-            other => panic!("expected the locked frame, got {other:?}"),
+            Frame::Data(value) if value == json!({ "kind": kind }) => {}
+            other => panic!("expected the {kind} frame, got {other:?}"),
         }
     }
 
@@ -281,7 +282,7 @@ fn backup(gateway: &FakeGateway, dir: &Path, exclude: &[&str]) -> Value {
         "backup",
         json!({ "gateway": gateway.authority(), "dir": dir, "exclude": exclude }),
     );
-    operation.expect_locked();
+    operation.expect("locked");
     operation.acknowledge();
     let Frame::Data(done) = operation.frame() else {
         panic!("backup failed");
@@ -338,7 +339,9 @@ fn backs_up_in_parts_and_restores_over_an_existing_directory() {
         "restore",
         restore_request(&gateway, &target, object.len(), &sha256),
     );
-    operation.expect_locked();
+    operation.expect("locked");
+    operation.acknowledge();
+    operation.expect("verified");
     operation.acknowledge();
     assert!(matches!(operation.frame(), Frame::Data(value) if value == json!({ "kind": "done" })));
     assert_eq!(operation.close(), 0);
@@ -370,7 +373,9 @@ fn restores_into_a_missing_directory() {
             done["sha256"].as_str().unwrap(),
         ),
     );
-    operation.expect_locked();
+    operation.expect("locked");
+    operation.acknowledge();
+    operation.expect("verified");
     operation.acknowledge();
     assert!(matches!(operation.frame(), Frame::Data(value) if value["kind"] == "done"));
     assert_eq!(operation.close(), 0);
@@ -395,12 +400,44 @@ fn a_mismatched_hash_leaves_the_target_untouched() {
         "restore",
         restore_request(&gateway, &target, object.len(), &"0".repeat(64)),
     );
-    operation.expect_locked();
+    operation.expect("locked");
     operation.acknowledge();
     let frame = operation.frame();
     assert_eq!(operation.close(), 0);
 
     assert!(matches!(frame, Frame::Data(value) if value["code"] == "integrity"));
+    assert_eq!(fs::read(target.join("old.txt")).unwrap(), b"old");
+    assert!(!target.join("new.txt").exists());
+    assert!(siblings(&temp.0).is_empty());
+}
+
+#[test]
+fn closing_stdin_instead_of_confirming_the_swap_leaves_the_target_as_it_was() {
+    let temp = TempDir::new();
+    let source = temp.0.join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("new.txt"), b"new").unwrap();
+    let gateway = FakeGateway::start();
+    let done = backup(&gateway, &source, &[]);
+    let object = gateway.complete();
+    let target = temp.0.join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("old.txt"), b"old").unwrap();
+
+    let mut operation = Operation::start(
+        "restore",
+        restore_request(
+            &gateway,
+            &target,
+            object.len(),
+            done["sha256"].as_str().unwrap(),
+        ),
+    );
+    operation.expect("locked");
+    operation.acknowledge();
+    operation.expect("verified");
+    assert_eq!(operation.close(), 0);
+
     assert_eq!(fs::read(target.join("old.txt")).unwrap(), b"old");
     assert!(!target.join("new.txt").exists());
     assert!(siblings(&temp.0).is_empty());
@@ -415,7 +452,7 @@ fn a_missing_object_is_not_found() {
         "restore",
         restore_request(&gateway, &temp.0.join("target"), 100, &"0".repeat(64)),
     );
-    operation.expect_locked();
+    operation.expect("locked");
     operation.acknowledge();
     let frame = operation.frame();
     assert_eq!(operation.close(), 0);
@@ -475,12 +512,14 @@ fn a_mount_made_during_a_restore_fails_it_before_the_swap() {
             done["sha256"].as_str().unwrap(),
         ),
     );
-    operation.expect_locked();
+    operation.expect("locked");
     let Some(_mount) = TestMount::tmpfs(&target.join("mnt")) else {
         operation.close();
         return;
     };
     fs::write(target.join("mnt/remote.txt"), b"remote").unwrap();
+    operation.acknowledge();
+    operation.expect("verified");
     operation.acknowledge();
     let frame = operation.frame();
     assert_eq!(operation.close(), 0);
@@ -510,11 +549,11 @@ fn closing_stdin_before_the_acknowledgement_ends_the_shim() {
     let temp = TempDir::new();
     let gateway = FakeGateway::start();
 
-    let mut operation = Operation::start(
+    let operation = Operation::start(
         "backup",
         json!({ "gateway": gateway.authority(), "dir": temp.0 }),
     );
-    operation.expect_locked();
+    operation.expect("locked");
     operation.close();
 
     assert!(gateway.store.lock().unwrap().parts.is_empty());
@@ -527,7 +566,7 @@ fn a_second_operation_waits_for_the_first_to_close_stdin() {
     let request = json!({ "gateway": gateway.authority(), "dir": temp.0 });
 
     let mut first = Operation::start("backup", request.clone());
-    first.expect_locked();
+    first.expect("locked");
     let mut second = Operation::start("backup", request);
     first.acknowledge();
     assert!(matches!(first.frame(), Frame::Data(value) if value["kind"] == "done"));
@@ -540,7 +579,7 @@ fn a_second_operation_waits_for_the_first_to_close_stdin() {
             .is_err()
     );
     assert_eq!(first.close(), 0);
-    second.expect_locked();
+    second.expect("locked");
     second.acknowledge();
     assert!(matches!(second.frame(), Frame::Data(value) if value["kind"] == "done"));
     assert_eq!(second.close(), 0);

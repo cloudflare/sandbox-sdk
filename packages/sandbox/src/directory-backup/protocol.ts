@@ -22,6 +22,7 @@ const ACKNOWLEDGEMENT = new Uint8Array([1]);
 const messageSchema = z.object({ kind: z.string() });
 const errorSchema = z.object({ kind: z.literal("error"), code: z.string(), detail: z.string() });
 const lockedSchema = z.strictObject({ kind: z.literal("locked") });
+const verifiedSchema = z.strictObject({ kind: z.literal("verified") });
 
 export interface ShimExchange<Done> {
   readonly command: "backup" | "restore";
@@ -43,7 +44,10 @@ export interface ShimExchange<Done> {
  * operation's deny.
  *
  * An abort closes stdin rather than killing the shim, which then removes whatever it had
- * partly written, and rejects at once with the signal's reason.
+ * partly written, and rejects with the signal's reason without waiting for the shim. A restore
+ * reports `verified` before it swaps and swaps only once acknowledged, so the exchange
+ * acknowledges it only while the signal hasn't aborted, and from then on reports the swap's
+ * outcome instead of the abort.
  */
 export async function runShimExchange<Done>(
   container: ContainerExecutor,
@@ -83,6 +87,15 @@ export async function runShimExchange<Done>(
     granting = exchange.grant();
     await session.waitFor(granting);
     await session.waitFor(input.write(ACKNOWLEDGEMENT));
+    if (exchange.command === "restore") {
+      const verified = await readMessage(control, operation, exchange.path);
+      if (!verifiedSchema.safeParse(verified).success) {
+        throw protocolError("sandbox-shim did not report a verified restore");
+      }
+      signal?.throwIfAborted();
+      session.stopFollowingSignal();
+      await input.write(ACKNOWLEDGEMENT);
+    }
     const result = await readMessage(control, operation, exchange.path);
     const done = exchange.done.safeParse(result);
     if (!done.success) throw protocolError("sandbox-shim returned an invalid backup result");

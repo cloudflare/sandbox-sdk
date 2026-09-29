@@ -15,32 +15,36 @@ import { TestFetcher } from "./worker-test-doubles.js";
 const SHA256 = "a".repeat(64);
 const HOST = "backups.sandbox.internal";
 const LOCKED = message(JSON.stringify({ kind: "locked" }));
+const VERIFIED = message(JSON.stringify({ kind: "verified" }));
+const RESTORED = message(JSON.stringify({ kind: "done" }));
 
 function message(json: string): Uint8Array[] {
   return dataFrame(encoder.encode(json));
 }
 
 /**
- * A `directory-backup` shim: sends `first`, sends `afterAcknowledgement` once the package writes
- * to stdin, and exits when stdin closes, as the real shim holds its lock until then.
+ * A `directory-backup` shim: sends `first`, answers the package's nth byte on stdin with
+ * `replies[n]`, and exits when stdin closes, as the real shim holds its lock until then.
  */
 class ShimDouble {
   readonly process: ExecProcess;
   readonly kill = vi.fn();
   #stdout: ReadableStreamDefaultController<Uint8Array> | undefined;
 
-  constructor(log: string[], afterAcknowledgement: Uint8Array[], first: Uint8Array[] = LOCKED) {
+  constructor(log: string[], replies: readonly Uint8Array[][], first: Uint8Array[] = LOCKED) {
     const exit = deferred<number>();
     const stdout = new ReadableStream<Uint8Array>({
       start: (controller) => {
         this.#stdout = controller;
-        for (const frame of first) controller.enqueue(frame);
+        this.send(first);
       },
     });
+    let writes = 0;
     const stdin = new WritableStream<Uint8Array>({
       write: (chunk) => {
         log.push(`stdin ${chunk.join(",")}`);
-        for (const frame of afterAcknowledgement) this.#stdout?.enqueue(frame);
+        this.send(replies[writes] ?? []);
+        writes += 1;
       },
       close: () => {
         log.push("stdin closed");
@@ -64,18 +68,31 @@ class ShimDouble {
       resize: vi.fn(),
     };
   }
+
+  /** Sends `frames` as one chunk, as a single write to the shim's stdout arrives. */
+  send(frames: Uint8Array[]): void {
+    if (frames.length === 0) return;
+    const chunk = new Uint8Array(frames.reduce((length, frame) => length + frame.length, 0));
+    let offset = 0;
+    for (const frame of frames) {
+      chunk.set(frame, offset);
+      offset += frame.length;
+    }
+    this.#stdout?.enqueue(chunk);
+  }
 }
 
 function setup(
   options: {
-    afterAcknowledgement?: Uint8Array[];
+    /** What the shim sends after each byte the package writes to stdin. */
+    replies?: Uint8Array[][];
     first?: Uint8Array[];
     /** The size R2 reports for the completed upload, or why completing it fails. */
     stored?: number | Error;
   } = {},
 ) {
   const log: string[] = [];
-  const shim = new ShimDouble(log, options.afterAcknowledgement ?? [], options.first);
+  const shim = new ShimDouble(log, options.replies ?? [], options.first);
   const propsByFetcher = new WeakMap<Fetcher, DirectoryBackupGatewayProps>();
   const controlKeys: string[] = [];
   const gateway: DirectoryBackupGatewayBinding = ({ props }) => {
@@ -145,7 +162,7 @@ describe("DirectoryBackup.intercept", () => {
 
 describe("DirectoryBackup.backup", () => {
   it("grants after the lock, denies before closing stdin, then completes the upload", async () => {
-    const { log, container, backups, controlKeys } = setup({ afterAcknowledgement: done() });
+    const { log, container, backups, controlKeys } = setup({ replies: [done()] });
 
     const backup = await backups.backup({
       dir: "/workspace",
@@ -189,7 +206,7 @@ describe("DirectoryBackup.backup", () => {
   });
 
   it("deletes the object when R2 stored a different size", async () => {
-    const { log, backups } = setup({ afterAcknowledgement: done(), stored: 11 });
+    const { log, backups } = setup({ replies: [done()], stored: 11 });
 
     const error = await backups.backup({ dir: "/workspace" }).catch((cause: Error) => cause);
 
@@ -198,7 +215,7 @@ describe("DirectoryBackup.backup", () => {
   });
 
   it("aborts the upload when completing it fails", async () => {
-    const { log, backups } = setup({ afterAcknowledgement: done(), stored: new Error("R2 down") });
+    const { log, backups } = setup({ replies: [done()], stored: new Error("R2 down") });
 
     await expect(backups.backup({ dir: "/workspace" })).rejects.toThrow("R2 down");
 
@@ -207,7 +224,7 @@ describe("DirectoryBackup.backup", () => {
 
   it("aborts the upload when a part fails, after denying and closing stdin", async () => {
     const { log, backups } = setup({
-      afterAcknowledgement: shimError("transfer", "gateway rejected the part upload with HTTP 502"),
+      replies: [shimError("transfer", "gateway rejected the part upload with HTTP 502")],
     });
 
     const error = await backups.backup({ dir: "/workspace" }).catch((cause: Error) => cause);
@@ -291,9 +308,7 @@ describe("DirectoryBackup.backup", () => {
 
 describe("DirectoryBackup.restore", () => {
   it("grants a read of the record's object and restores into another directory", async () => {
-    const { log, container, backups } = setup({
-      afterAcknowledgement: message(JSON.stringify({ kind: "done" })),
-    });
+    const { log, container, backups } = setup({ replies: [VERIFIED, RESTORED] });
 
     await backups.restore(record, { dir: "/elsewhere" });
 
@@ -306,9 +321,41 @@ describe("DirectoryBackup.restore", () => {
     expect(log).toEqual([
       `register ${HOST} read ${KEY}`,
       "stdin 1",
+      "stdin 1",
       `register ${HOST} deny`,
       "stdin closed",
     ]);
+  });
+
+  it("does not let a verified restore swap when the signal has aborted", async () => {
+    const { log, shim, backups } = setup();
+    const controller = new AbortController();
+
+    const pending = backups.restore(record, { signal: controller.signal });
+    await vi.waitFor(() => expect(log).toContain("stdin 1"));
+    shim.send(VERIFIED);
+    controller.abort(new Error("stop"));
+
+    await expect(pending).rejects.toThrow("stop");
+    expect(log).toEqual([
+      `register ${HOST} read ${KEY}`,
+      "stdin 1",
+      `register ${HOST} deny`,
+      "stdin closed",
+    ]);
+  });
+
+  it("reports the swap's outcome when aborted after letting it swap", async () => {
+    const { log, shim, backups } = setup({ replies: [VERIFIED] });
+    const controller = new AbortController();
+
+    const pending = backups.restore(record, { signal: controller.signal });
+    await vi.waitFor(() => expect(log.filter((entry) => entry === "stdin 1")).toHaveLength(2));
+    controller.abort(new Error("stop"));
+    shim.send(RESTORED);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(log.slice(-2)).toEqual([`register ${HOST} deny`, "stdin closed"]);
   });
 
   it("maps the shim's integrity and not-found results", async () => {
@@ -316,7 +363,7 @@ describe("DirectoryBackup.restore", () => {
       ["integrity", "BACKUP_INTEGRITY"],
       ["notFound", "BACKUP_NOT_FOUND"],
     ] as const) {
-      const { backups } = setup({ afterAcknowledgement: shimError(code, "detail") });
+      const { backups } = setup({ replies: [shimError(code, "detail")] });
 
       const error = await backups.restore(record).catch((cause: Error) => cause);
 

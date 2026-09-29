@@ -42,7 +42,7 @@ export interface DirectoryBackupOptions {
 export interface DirectoryRestoreOptions {
   /** Absolute path to restore into instead of the record's `dir`. */
   dir?: string;
-  /** Cancels the operation without imposing a timeout. */
+  /** Cancels the restore until the download is verified, without imposing a timeout. */
   signal?: AbortSignal;
 }
 

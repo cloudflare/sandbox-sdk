@@ -4,8 +4,10 @@
 //!
 //! One operation runs at a time per container. After taking the lock, the shim sends
 //! `{"kind":"locked"}`, the package registers the operation's grant and writes one byte, and the
-//! shim starts. It holds the lock until the package closes stdin after the final frame, so the
-//! package replaces the grant before the next operation can register its own.
+//! shim starts. A restore then sends `{"kind":"verified"}` and swaps only once the package writes
+//! another byte, so an abort before that leaves the target as it was. The shim holds the lock
+//! until the package closes stdin after the final frame, so the package replaces the grant before
+//! the next operation can register its own.
 
 mod capture;
 mod extract;
@@ -140,6 +142,7 @@ pub(crate) fn run(
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum Message<'a, Done> {
     Locked,
+    Verified,
     Done(Done),
     Error { code: &'a str, detail: &'a str },
 }
@@ -205,7 +208,22 @@ impl<W: Write> Session<'_, W> {
             .map_err(failure)?;
         sys::lock_exclusive(&file).map_err(failure)?;
         self.lock = Some(file);
-        send(self.output, &Message::<'_, ()>::Locked).map_err(|_| Failure::Aborted)?;
+        self.send_and_wait_for_acknowledgement(&Message::Locked)
+    }
+
+    /// Reports that the restore is verified, then waits for the package to let it swap.
+    fn request_swap(&mut self) -> Result<(), Failure> {
+        self.send_and_wait_for_acknowledgement(&Message::Verified)
+    }
+
+    /// Sends `message` and waits for the package to acknowledge it. A close instead means the
+    /// caller gave up.
+    fn send_and_wait_for_acknowledgement(
+        &mut self,
+        message: &Message<'_, ()>,
+    ) -> Result<(), Failure> {
+        self.lifeline.expect_acknowledgement();
+        send(self.output, message).map_err(|_| Failure::Aborted)?;
         if self.lifeline.wait_for_acknowledgement() {
             Ok(())
         } else {

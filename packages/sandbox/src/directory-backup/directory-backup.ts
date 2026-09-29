@@ -148,9 +148,12 @@ export class DirectoryBackup {
 
   /**
    * Replaces `options.dir`, or the record's `dir`, with the backup's contents. The directory is
-   * extracted beside the target and swapped in only after the download is verified, so a failed
-   * or aborted restore leaves the target as it was. The target's parent must exist; the target
-   * need not.
+   * extracted beside the target and swapped in only after the download is verified. A
+   * `SandboxFileError` or `SandboxBackupError` means the target was not replaced, and so does
+   * an abort before the download is verified; after that, aborting no longer ends the call. If the
+   * connection to the Container is lost, as when the Durable Object restarts, the target may or
+   * may not have been replaced, and restoring again settles it. The target's parent must exist;
+   * the target need not.
    *
    * @throws {SandboxFileError} The target's parent is missing (`ENOENT`), the target isn't a
    *   directory (`ENOTDIR`), is a mount point or has one inside it (`EBUSY`), the swap fails (for

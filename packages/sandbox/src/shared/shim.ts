@@ -140,6 +140,11 @@ export class ShimSession {
     return this.#abort.waitFor(operation);
   }
 
+  /** Stops following the caller's signal: later waits no longer reject when it aborts. */
+  stopFollowingSignal(): void {
+    this.#abort.dispose();
+  }
+
   finish(): void {
     if (this.#settled) return;
     this.#settled = true;

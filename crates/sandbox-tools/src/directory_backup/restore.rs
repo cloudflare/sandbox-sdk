@@ -1,5 +1,6 @@
 //! Restores a backup by extracting it into a new directory beside the target, checking that the
-//! download is exactly the recorded backup, and swapping the new directory in with one rename.
+//! download is exactly the recorded backup, and swapping the new directory in with one rename
+//! once the package confirms that the caller still wants it.
 
 use std::ffi::{CStr, CString, OsStr};
 use std::fs;
@@ -30,7 +31,9 @@ pub(super) struct RestoreRequest {
     sha256: String,
 }
 
-/// Restores the backup. The final frame carries nothing but its kind.
+/// Restores the backup. The download, its checks, and the directory metadata all come before
+/// the `verified` frame. After the package's answer only the mount check, the rename, and
+/// removing the replaced tree remain. The final frame carries nothing but its kind.
 pub(super) fn restore<W: Write>(
     request: &RestoreRequest,
     session: &mut Session<'_, W>,
@@ -47,6 +50,7 @@ pub(super) fn restore<W: Write>(
     session.lock()?;
     let sibling = Sibling::create(&target)?;
     download(request, &session.lifeline, sibling.open()?)?;
+    session.request_swap()?;
     sibling.swap_in()
 }
 

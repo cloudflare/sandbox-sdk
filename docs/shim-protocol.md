@@ -25,17 +25,17 @@ The package turns a file error into `SandboxFileError`, and anything malformed i
 
 ## Commands
 
-| Operation         | Arguments                                           | stdin                               | stdout               | stderr         |
-| ----------------- | --------------------------------------------------- | ----------------------------------- | -------------------- | -------------- |
-| `readFile`        | `read <PATH>`                                       | Not used                            | File bytes, unframed | Control frames |
-| `writeFile`       | `write <PATH>`                                      | File bytes, unframed                | Control frames       | Ignored        |
-| `stat`, `lstat`   | `stat <PATH>`, `lstat <PATH>`                       | Not used                            | One control frame    | Ignored        |
-| `readDirectory`   | `read-directory <PATH>`                             | Not used                            | One control frame    | Ignored        |
-| `mkdir`           | `mkdir <PATH> [--recursive]`                        | Not used                            | One control frame    | Ignored        |
-| `rename`          | `rename <SOURCE> <DESTINATION>`                     | Not used                            | One control frame    | Ignored        |
-| `remove`          | `remove <PATH> [--recursive] [--force]`             | Not used                            | One control frame    | Ignored        |
-| `S3Mount`         | `s3-mount <mount\|inspect\|unmount> <ARGUMENT>`     | One byte, for `mount` and `unmount` | JSON in data frames  | Ignored        |
-| `DirectoryBackup` | `directory-backup <backup\|restore> <REQUEST_JSON>` | One byte, then close                | JSON in data frames  | Ignored        |
+| Operation         | Arguments                                           | stdin                                    | stdout               | stderr         |
+| ----------------- | --------------------------------------------------- | ---------------------------------------- | -------------------- | -------------- |
+| `readFile`        | `read <PATH>`                                       | Not used                                 | File bytes, unframed | Control frames |
+| `writeFile`       | `write <PATH>`                                      | File bytes, unframed                     | Control frames       | Ignored        |
+| `stat`, `lstat`   | `stat <PATH>`, `lstat <PATH>`                       | Not used                                 | One control frame    | Ignored        |
+| `readDirectory`   | `read-directory <PATH>`                             | Not used                                 | One control frame    | Ignored        |
+| `mkdir`           | `mkdir <PATH> [--recursive]`                        | Not used                                 | One control frame    | Ignored        |
+| `rename`          | `rename <SOURCE> <DESTINATION>`                     | Not used                                 | One control frame    | Ignored        |
+| `remove`          | `remove <PATH> [--recursive] [--force]`             | Not used                                 | One control frame    | Ignored        |
+| `S3Mount`         | `s3-mount <mount\|inspect\|unmount> <ARGUMENT>`     | One byte, for `mount` and `unmount`      | JSON in data frames  | Ignored        |
+| `DirectoryBackup` | `directory-backup <backup\|restore> <REQUEST_JSON>` | One byte per acknowledgement, then close | JSON in data frames  | Ignored        |
 
 The package sends only absolute paths. It joins a relative path onto the caller's `cwd`, and does not pass `cwd` to `exec()`. Linux resolves the joined path the same way as a relative path after entering `cwd`, including `..` after a symlink, and a missing `cwd` fails the operation with `ENOENT` for the path. A missing `cwd` given to `exec()` would instead fail to start the process, which looks the same as a missing shim binary. The shim does not change the path.
 
@@ -110,13 +110,13 @@ For `mount` and `unmount`, the shim holds a lock on the mount path for the whole
 The shim moves the archive itself, in parallel HTTP requests to `DirectoryBackupGateway` through the outbound intercept on `backups.sandbox.internal`. The request JSON names that authority in `gateway`, so tests can point it at a local server.
 
 - `backup` takes `{"gateway", "dir", "exclude", "gitignore"}`. It writes a tar archive compressed with zstd as 16 MiB parts, `PUT /parts/<N>`, and ends with `{"kind": "done", "size", "sha256", "parts": [{"partNumber", "etag"}]}`.
-- `restore` takes `{"gateway", "dir", "size", "sha256"}`. It reads the object with `GET /object` and `Range` headers, extracts it into a sibling of `dir`, checks the size and SHA-256, and swaps the sibling in with `renameat2`. It ends with `{"kind": "done"}`.
+- `restore` takes `{"gateway", "dir", "size", "sha256"}`. It reads the object with `GET /object` and `Range` headers, extracts it into a sibling of `dir`, checks the size and SHA-256, and sends `{"kind": "verified"}`. The package answers with another `1` unless the caller's signal has aborted, and stops following the signal once it has. The shim then swaps the sibling in with `renameat2` and ends with `{"kind": "done"}`. A close instead of the answer leaves `dir` as it was.
 
 Both validate the request, then take an exclusive lock on `/run/sandbox/directory-backups.lock`, and send `{"kind": "locked"}`. The package registers the operation's gateway grant and writes one byte, `1`, to stdin. Failures send `{"kind": "error", "code", "detail"}`, where `integrity`, `notFound`, and `transfer` become `SandboxBackupError` codes and `protocol` becomes `SandboxProtocolError`, or a file-error frame.
 
 After its last frame the shim keeps the lock until stdin closes. The package replaces the grant with one that denies every request before it closes stdin, so one operation's deny never lands after the next operation's grant.
 
-Stdin is also the lifeline. When it closes before the shim has finished, because the package gave up or its Durable Object went away, the shim stops, removes any partial restore, and exits without a frame. A shim still waiting for the lock exits too.
+Stdin is also the lifeline. When it closes before the operation's last acknowledgement, because the package gave up or its Durable Object went away, the shim stops, removes any partial restore, and exits without a frame. A shim still waiting for the lock exits too. After a restore's second byte, the shim finishes the swap and sends its final frame whether or not stdin closes.
 
 ## Cancellation and cleanup
 

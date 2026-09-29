@@ -1,10 +1,10 @@
 //! Stdin as the Durable Object's lifeline.
 //!
-//! The package writes one acknowledgement byte after it registers the operation's grant, then
-//! keeps stdin open until the operation ends. The platform closes stdin as soon as the Durable
-//! Object instance holding the process goes away, and sends nothing else: no signal, and writes
-//! to stdout keep succeeding. So end of input, or any unexpected byte, before the package's
-//! normal close means the operation has no owner, and the shim stops.
+//! The package answers each frame the shim waits on with one acknowledgement byte, and keeps
+//! stdin open until the operation ends. The platform closes stdin as soon as the Durable Object
+//! instance holding the process goes away, and sends nothing else: no signal, and writes to
+//! stdout keep succeeding. So end of input, or any byte the shim isn't waiting for, before the
+//! package's normal close means the operation has no owner, and the shim stops.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -28,7 +28,9 @@ struct Shared {
 }
 
 struct State {
-    acknowledged: bool,
+    /// Acknowledgements the shim has asked for, and those the package has sent.
+    expected: u32,
+    received: u32,
     closed: bool,
     /// While the main thread may be blocked where it can't look, such as in `flock`, a close
     /// ends the process directly. Nothing needs cleaning up at that point.
@@ -47,7 +49,8 @@ impl Lifeline {
         Self {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
-                    acknowledged: false,
+                    expected: 0,
+                    received: 0,
                     closed: false,
                     exit_on_close: true,
                 }),
@@ -69,8 +72,11 @@ impl Lifeline {
                 }
             };
             let mut state = self.lock();
-            if matches!(read, Ok(1)) && byte[0] == ACKNOWLEDGEMENT && !state.acknowledged {
-                state.acknowledged = true;
+            if matches!(read, Ok(1))
+                && byte[0] == ACKNOWLEDGEMENT
+                && state.received < state.expected
+            {
+                state.received += 1;
                 self.shared.changed.notify_all();
                 continue;
             }
@@ -84,11 +90,18 @@ impl Lifeline {
         }
     }
 
-    /// Waits for the package's acknowledgement. From then on a close no longer exits the process:
-    /// the main thread notices it and cleans up.
+    /// Asks for one more acknowledgement. Call it before sending the frame the package answers,
+    /// so that the answer can't arrive first.
+    pub(super) fn expect_acknowledgement(&self) {
+        self.lock().expected += 1;
+    }
+
+    /// Waits for every acknowledgement asked for so far, and returns false if stdin closed
+    /// instead. From then on a close no longer exits the process: the main thread notices it and
+    /// cleans up.
     pub(super) fn wait_for_acknowledgement(&self) -> bool {
         let mut state = self.lock();
-        while !state.acknowledged && !state.closed {
+        while state.received < state.expected && !state.closed {
             state = self.wait(state);
         }
         state.exit_on_close = false;
@@ -203,6 +216,7 @@ mod tests {
     #[test]
     fn a_close_after_the_acknowledgement_aborts() {
         let (lifeline, stdin) = watched();
+        lifeline.expect_acknowledgement();
         stdin.send(ACKNOWLEDGEMENT).unwrap();
 
         assert!(lifeline.wait_for_acknowledgement());
@@ -215,6 +229,7 @@ mod tests {
     #[test]
     fn close_before_acknowledgement_is_reported() {
         let (lifeline, stdin) = watched();
+        lifeline.expect_acknowledgement();
         drop(stdin);
 
         assert!(!lifeline.wait_for_acknowledgement());
@@ -222,11 +237,35 @@ mod tests {
     }
 
     #[test]
+    fn each_acknowledgement_answers_one_request() {
+        let (lifeline, stdin) = watched();
+        for _ in 0..2 {
+            lifeline.expect_acknowledgement();
+            stdin.send(ACKNOWLEDGEMENT).unwrap();
+            assert!(lifeline.wait_for_acknowledgement());
+        }
+
+        assert!(!lifeline.aborted());
+    }
+
+    #[test]
     fn an_unexpected_byte_counts_as_a_close() {
         let (lifeline, stdin) = watched();
+        lifeline.expect_acknowledgement();
         stdin.send(7).unwrap();
 
         assert!(!lifeline.wait_for_acknowledgement());
+    }
+
+    #[test]
+    fn an_acknowledgement_nobody_asked_for_counts_as_a_close() {
+        let (lifeline, stdin) = watched();
+        stdin.send(ACKNOWLEDGEMENT).unwrap();
+
+        // Stdin stays open, so only the byte can close the lifeline.
+        lifeline.wait_for_close();
+        assert!(lifeline.aborted());
+        drop(stdin);
     }
 
     #[test]
