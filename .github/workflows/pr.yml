@@ -1,0 +1,88 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Together the two jobs run npm run check and npm run test:release. Each job can be re-run on its
+# own when it fails.
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Check
+        run: npm run check:ts
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Test packed package
+        run: npm run test:package
+
+  # Every step builds from images/sandbox-tools/Dockerfile on the same Docker daemon, so later
+  # steps reuse the stages that shim:check compiled instead of compiling the shim again.
+  shim:
+    name: Shim
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Check
+        run: npm run shim:check
+
+      - name: Test with real mounts
+        run: npm run test:shim-mounts
+
+      - name: Test S3 gateway with MinIO and s3fs
+        run: npm run test:s3-e2e
+
+      - name: Test S3 mount lifecycle
+        run: npm run test:s3-lifecycle
+
+  basic-gate:
+    name: ci/basic
+    if: always()
+    needs: [typescript, shim]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check job results
+        env:
+          TYPESCRIPT: ${{ needs.typescript.result }}
+          SHIM: ${{ needs.shim.result }}
+        run: |
+          echo "typescript: $TYPESCRIPT"
+          echo "shim: $SHIM"
+          if [[ "$TYPESCRIPT" != "success" || "$SHIM" != "success" ]]; then
+            echo "::error::Required checks did not succeed"
+            exit 1
+          fi

@@ -19,14 +19,13 @@ npm run check
 npm test
 ```
 
-`npm run check` runs:
+`npm run check` runs `check:ts`, then `shim:check`, described below. `check:ts` runs:
 
 1. `vp pack`, which builds the package into `packages/sandbox/dist`.
 2. `vp check`, which formats, lints, and type-checks the TypeScript. The lint rules include the anti-slop rules in `tools/oxlint/anti-slop`. Fix what they report instead of adding a suppression.
 3. `knip`, which finds unused files, exports, and dependencies.
-4. `shim:check`, described below.
 
-`npm test` runs the package's unit tests with `vp test`, then `shim:check` again. Integration tests skip themselves unless you turn them on.
+`npm test` runs `test:unit`, the package's unit tests with `vp test`, then `shim:check` again. Integration tests skip themselves unless you turn them on.
 
 Done when both commands exit with code `0`.
 
@@ -65,6 +64,28 @@ The Rust tests run inside the Linux build, so Linux-specific behavior is tested 
 The S3 tests start MinIO and an `s3fs` container, and reach services on the host through `host.docker.internal`. They remove the containers, networks, and images they create when they finish.
 
 `npm run test:s3-native-local` runs the full mount lifecycle under `wrangler dev`. It is not part of `test:release`, because it needs Wrangler and workerd builds that are not released yet. Set `SANDBOX_WRANGLER_PATH` and `MINIFLARE_WORKERD_PATH` to local checkouts that contain the commits listed in `packages/sandbox/tests/s3-native-local.integration.test.ts`.
+
+## On pull requests
+
+Pull requests into `main` and `next` need two passing checks and an approving review from a code owner in `.github/CODEOWNERS`.
+
+`ci/basic` comes from `.github/workflows/pr.yml`, on `pull_request`. Its two jobs together run `npm run check` and everything in `npm run test:release`:
+
+- **TypeScript** runs `check:ts`, `test:unit`, and `test:package`.
+- **Shim** runs `shim:check` and then the three tests in the table above that need privileged containers. They all build from the same Dockerfile on one Docker daemon, so the shim compiles once.
+
+When a job fails, re-run only that job.
+
+`ci/gate` comes from `.github/workflows/pr-privileged.yml`, on `pull_request_target`. It deploys `examples/workspace` from the PR head to the CI account, under a Worker name unique to the run, behind an entry point that requires a token unique to the run. It writes, runs, reads, and resets one sandbox over HTTP. A separate job then deletes the Worker and its container application, and the check fails if either remains. Re-running the failed jobs deploys again under a new name.
+
+`pull_request_target` runs the workflow file from the base branch, with the repository's secrets, so a change to `pr-privileged.yml` takes effect only after it merges.
+
+`ci/gate` always runs the smoke test for a branch in this repository. For a fork PR:
+
+- When the PR changes only docs, `ci/gate` passes without deploying anything.
+- Otherwise `ci/gate` fails until a maintainer reads the head commit and adds the `ok-to-test` label. The run for that labeling event tests that commit. Any later event on the PR, such as a push, removes the label and fails the check again.
+
+The smoke test runs the PR's code with the CI account's API token. Add `ok-to-test` only to a commit you would run with that token yourself.
 
 ## Test in production
 

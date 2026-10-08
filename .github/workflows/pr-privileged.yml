@@ -1,0 +1,344 @@
+name: PR Privileged
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: pr-privileged-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
+  # Unique to the run, so cleanup after a cancelled run never deletes a newer run's deployment.
+  WORKER: sandbox-ci-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  # Decides whether the smoke test may run the PR's code with the Cloudflare secrets.
+  # A branch in this repository always may. A fork PR that changes only docs needs no smoke test.
+  # Any other fork PR may only in the run for the event that adds the ok-to-test label, against the
+  # head commit of that event. Every other event on such a PR removes the label and fails the gate,
+  # so approval never carries over to a later commit.
+  policy:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    timeout-minutes: 2
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+      run_privileged: ${{ steps.check.outputs.run_privileged }}
+    steps:
+      - name: Check authorization
+        id: check
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          decide() {
+            printf 'authorized=%s\nrun_privileged=%s\nrevoke=%s\n' "$1" "$2" "${3:-false}" >> "$GITHUB_OUTPUT"
+          }
+
+          if [[ "$IS_FORK" == "false" ]]; then
+            echo "::notice::Authorized: a branch in this repository"
+            decide true true
+            exit 0
+          fi
+
+          # Fail closed: any path outside this list needs the smoke test, including the old path
+          # of a renamed file. If an API call fails, set -e stops the step.
+          pr=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
+          gh api --paginate "repos/$GH_REPO/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/files.jsonl"
+          files=$(jq -r '.filename, (.previous_filename // empty)' "$RUNNER_TEMP/files.jsonl")
+          if [[ -z "$files" ]]; then
+            echo "::error::GitHub returned no changed files"
+            exit 1
+          fi
+          needs_smoke=false
+          # The files API lists at most 3,000 files, so a longer PR may hide code past the limit.
+          listed=$(wc -l < "$RUNNER_TEMP/files.jsonl")
+          changed=$(jq .changed_files <<< "$pr")
+          if (( listed != changed )); then
+            echo "::notice::Needs the smoke test: GitHub listed $listed of $changed changed files"
+            needs_smoke=true
+          fi
+          while IFS= read -r file; do
+            case "$file" in
+              docs/*|*.md|LICENSE|.github/CODEOWNERS) ;;
+              *)
+                echo "::notice::Needs the smoke test: $file"
+                needs_smoke=true
+                break
+                ;;
+            esac
+          done <<< "$files"
+          if [[ "$needs_smoke" == "false" ]]; then
+            echo "::notice::Authorized: a fork PR that changes only docs, so no smoke test"
+            decide true false
+            exit 0
+          fi
+
+          if [[ "$ACTION" == "labeled" && "$LABEL" == "ok-to-test" ]]; then
+            echo "::notice::Authorized: ok-to-test added for $HEAD_SHA"
+            decide true true
+            exit 0
+          fi
+
+          if jq -e '.labels | any(.name == "ok-to-test")' <<< "$pr" > /dev/null; then
+            decide false false true
+          else
+            decide false false
+          fi
+          echo "::notice::Not authorized: a fork PR needs a maintainer to add ok-to-test for this commit"
+
+      - name: Generate an app token to remove the label
+        id: app-token
+        if: steps.check.outputs.revoke == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Remove ok-to-test
+        if: steps.check.outputs.revoke == 'true'
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            };
+            // Comment first: removing the label starts a new run, which cancels this one.
+            await github.rest.issues.createComment({
+              ...issue,
+              body: "`ok-to-test` approves one commit, so this PR's latest event removed it. A maintainer must read the head commit and add the label again to run `ci/gate`.",
+            });
+            try {
+              await github.rest.issues.removeLabel({ ...issue, name: "ok-to-test" });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+  # Deploys the workspace example from the PR head and drives one sandbox over HTTP. The job runs
+  # the PR's code, so approving it means trusting that code with the Cloudflare secrets: only the
+  # deploy step receives them, but earlier steps can change what that step runs.
+  workspace-smoke:
+    name: Workspace smoke test
+    needs: policy
+    if: needs.policy.outputs.run_privileged == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      # pull_request_target checks out the base branch by default; test the PR head.
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # No dependency cache: a cache written here would be shared with trusted runs.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build the package and sandbox-tools image
+        run: npx vp pack && npm run shim:build
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          # The example runs any script it is sent, and its workers.dev URL is public. An entry
+          # point used only here requires a token unique to this run.
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "CI_TOKEN=$token" >> "$GITHUB_ENV"
+          cat > examples/workspace/src/ci-entry.ts <<'TS'
+          import worker from "./index";
+
+          export * from "./index";
+
+          export default {
+            fetch(request: Request, env: Env & { CI_TOKEN: string }, ctx: ExecutionContext) {
+              if (request.headers.get("authorization") !== `Bearer ${env.CI_TOKEN}`) {
+                return new Response("Unauthorized", { status: 401 });
+              }
+              return worker.fetch(request, env, ctx);
+            },
+          };
+          TS
+
+          # Rename in the config, not with --name: Wrangler names the Container application
+          # after the config's name even when --name is given.
+          config=examples/workspace/wrangler.ci.json
+          node -e '
+            const fs = require("node:fs");
+            const ts = require("typescript");
+            const [source, target, name] = process.argv.slice(1);
+            const { config, error } = ts.parseConfigFileTextToJson(source, fs.readFileSync(source, "utf8"));
+            if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+            fs.writeFileSync(target, JSON.stringify({ ...config, name, main: "src/ci-entry.ts" }, null, 2));
+          ' examples/workspace/wrangler.jsonc "$config" "$WORKER"
+          # The Wrangler version that the package scripts pin.
+          npx --yes wrangler@4.137.0 deploy --config "$config" --containers-rollout immediate \
+            --var "CI_TOKEN:$token"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Write, run, read, and reset a sandbox
+        run: |
+          set -euo pipefail
+          url="https://${WORKER}.${CF_ACCOUNT_SUBDOMAIN}.workers.dev/sandboxes/ci-${GITHUB_RUN_ID}"
+          script='printf "hello from ci\n"'
+
+          # A new Container application can take minutes to start its first Container.
+          auth=()
+          request() {
+            local expected=$1; shift
+            local deadline=$((SECONDS + 300)) status
+            while :; do
+              status=$(curl --silent --show-error --output response --write-out '%{http_code}' --max-time 60 "${auth[@]}" "$@" || echo 000)
+              [[ "$status" == "$expected" ]] && return 0
+              if (( SECONDS >= deadline )); then
+                echo "::error::$* returned $status, expected $expected: $(cat response)"
+                return 1
+              fi
+              echo "$* returned $status; retrying"
+              sleep 10
+            done
+          }
+
+          request 401 --request PUT --data-binary "$script" "$url/source"
+          auth=(--header "Authorization: Bearer $CI_TOKEN")
+
+          request 204 --request PUT --data-binary "$script" "$url/source"
+
+          request 200 --request POST "$url/run"
+          jq -e '.exitCode == 0 and .stdout == "hello from ci\n"' response
+
+          request 200 "$url/source"
+          [[ "$(cat response)" == "$script" ]]
+
+          # A reset Container starts again with a fresh disk.
+          request 204 --request DELETE "$url/execution"
+          request 404 "$url/source"
+          request 204 --request DELETE "$url/execution"
+
+  # Runs on its own runner without the PR's code, after the smoke test finishes, fails, or is
+  # cancelled. It deletes only this run's Worker and Container applications, and fails when either
+  # is still there.
+  cleanup:
+    name: Delete the deployment
+    needs: [policy, workspace-smoke]
+    if: always() && needs.policy.outputs.run_privileged == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Delete the Container applications and the Worker
+        run: |
+          set -uo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          cf() {
+            curl --silent --show-error --max-time 60 --retry 3 \
+              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "$@"
+          }
+          # Each application is named <Worker name>-<Durable Object class in lowercase>. The
+          # Worker name is unique to this run, so the prefix matches only this run's applications.
+          applications() {
+            cf --fail "$api/containers/applications" \
+              | jq -r --arg prefix "${WORKER}-" '.result[] | select(.name | startswith($prefix)) | "\(.id) \(.name)"'
+          }
+          failed=0
+
+          # Wrangler cannot delete Durable Object-managed applications, so use the API.
+          if found=$(applications); then
+            while read -r id name; do
+              [[ -z "$id" ]] && continue
+              if cf --fail --output /dev/null --request DELETE "$api/containers/applications/$id"; then
+                echo "Deleted Container application $name ($id)"
+              else
+                echo "::error::Could not delete Container application $name ($id)"
+                failed=1
+              fi
+            done <<< "$found"
+          else
+            echo "::error::Could not list Container applications"
+            failed=1
+          fi
+
+          status=$(cf --output /dev/null --write-out '%{http_code}' --request DELETE "$api/workers/scripts/${WORKER}?force=true")
+          case "$status" in
+            200) echo "Deleted Worker $WORKER" ;;
+            404) echo "Worker $WORKER was not deployed" ;;
+            *) echo "::error::Deleting Worker $WORKER returned $status"; failed=1 ;;
+          esac
+
+          if ! remaining=$(applications) || [[ -n "$remaining" ]]; then
+            echo "::error::Container applications may remain: ${remaining:-the list request failed}"
+            failed=1
+          fi
+          status=$(cf --output /dev/null --write-out '%{http_code}' "$api/workers/scripts/${WORKER}")
+          if [[ "$status" != 404 ]]; then
+            echo "::error::Worker $WORKER may remain: looking it up returned $status"
+            failed=1
+          fi
+          exit "$failed"
+
+  # The required check.
+  gate:
+    name: ci/gate
+    if: always()
+    needs: [policy, workspace-smoke, cleanup]
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      # A newer run replaced this one, perhaps because ok-to-test was removed. Only the newer run
+      # decides the check, even when this run's jobs finished.
+      - name: Fail a cancelled run
+        if: cancelled()
+        run: |
+          echo "::error::This run was cancelled"
+          exit 1
+
+      - name: Evaluate gate
+        env:
+          AUTHORIZED: ${{ needs.policy.outputs.authorized }}
+          RUN_PRIVILEGED: ${{ needs.policy.outputs.run_privileged }}
+          SMOKE: ${{ needs.workspace-smoke.result }}
+          CLEANUP: ${{ needs.cleanup.result }}
+        run: |
+          echo "policy.authorized: $AUTHORIZED"
+          echo "policy.run_privileged: $RUN_PRIVILEGED"
+          echo "workspace-smoke: $SMOKE"
+          echo "cleanup: $CLEANUP"
+          if [[ "$AUTHORIZED" != "true" ]]; then
+            echo "::error::This fork PR needs a maintainer to read the head commit and add the ok-to-test label."
+            exit 1
+          fi
+          # A fork PR that changes only docs skips the smoke test; everything else must pass it
+          # and leave nothing deployed.
+          if [[ "$RUN_PRIVILEGED" == "true" && ( "$SMOKE" != "success" || "$CLEANUP" != "success" ) ]]; then
+            echo "::error::The workspace smoke test or its cleanup did not succeed"
+            exit 1
+          fi
+          echo "All privileged checks passed"
