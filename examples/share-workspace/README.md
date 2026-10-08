@@ -4,10 +4,17 @@ Deploy this Worker to share servers that run in a named Container. Each exposed 
 
 Done when a server in the Container answers at its preview URL and at a quick tunnel URL.
 
+Create the project:
+
+```sh
+npm create cloudflare@latest -- share-workspace --template=cloudflare/sandbox-sdk/examples/share-workspace
+cd share-workspace
+```
+
 Preview URLs need a wildcard hostname on a zone you own. In `wrangler.jsonc`, replace `preview.example.com` in `PREVIEW_DOMAIN` and `routes` with your own. Add a proxied wildcard DNS record for it and a certificate that covers it, as in [Route preview hostnames to your Worker](https://developers.cloudflare.com/sandbox/previews/serve-previews-on-their-own-hostnames/#route-preview-hostnames-to-your-worker). Then deploy:
 
 ```sh
-npm run example:share-workspace:deploy
+npm run deploy
 ```
 
 Start a server and wait until its port answers:

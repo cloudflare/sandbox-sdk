@@ -5,7 +5,9 @@ Deploy this Worker to save Container disk and start from that snapshot. For a st
 Done when a read after checkpoint returns the same bytes you wrote.
 
 ```sh
-npm run example:checkpoint-workspace:deploy
+npm create cloudflare@latest -- checkpoint-workspace --template=cloudflare/sandbox-sdk/examples/checkpoint-workspace
+cd checkpoint-workspace
+npm run deploy
 ```
 
 ```sh

@@ -2,13 +2,17 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": [
-        "devin/src/index.ts",
-        "examples/*/src/index.ts",
-        "examples/coding-agents/*/src/index.ts"
-      ],
-      "ignore": ["examples/*/app/**", "openai/**", "tools/oxlint/anti-slop/**"],
-      "ignoreDependencies": ["cloudflare"]
+      "entry": ["devin/src/index.ts"],
+      "ignore": ["openai/**", "tools/oxlint/anti-slop/**"],
+      // The `wrangler` override pins every workspace to this version, and tools/example.ts runs it.
+      "ignoreDependencies": ["cloudflare", "wrangler"]
+    },
+    "examples/preview-workspace": {
+      "ignore": ["app/**"]
+    },
+    "examples/coding-agents/*": {
+      // The agents import the package through ../../shared, which knip assigns to the root.
+      "ignoreDependencies": ["@cloudflare/sandbox"]
     },
     "packages/sandbox": {
       "entry": ["src/index.ts", "tests/fixtures/s3-native-local/worker.ts"]

@@ -5,7 +5,9 @@ Deploy this Worker to open a live shell in a named Container from your browser. 
 Done when the page shows a prompt, `stty size` changes when you resize the window, and reloading the page returns to the same shell.
 
 ```sh
-npm run example:terminal-workspace:deploy
+npm create cloudflare@latest -- terminal-workspace --template=cloudflare/sandbox-sdk/examples/terminal-workspace
+cd terminal-workspace
+npm run deploy
 ```
 
 Open the terminal for `agent-1`, keeping the trailing slash:

@@ -26,16 +26,15 @@ Every other host gets `403`. Connections to other ports time out.
 
 Set `AI_GATEWAY_ACCOUNT_ID` and `AI_GATEWAY_ID` in the agent's `wrangler.jsonc`. `MODEL` is a model ID in the format the agent expects; its README says which. To attach [custom metadata](https://developers.cloudflare.com/ai-gateway/observability/custom-metadata/) to each model request, set `AI_GATEWAY_METADATA` to a JSON object, for example `{"project": "my-app"}`.
 
-Create a Cloudflare API token with the **AI Gateway Run** permission. The first deploy of a Worker with required secrets reads them from a file:
+Create a Cloudflare API token with the **AI Gateway Run** permission. Deploy from the repository root, after `npm install`. The first deploy of a Worker with required secrets reads them from a file:
 
 ```sh
-npm run shim:build
 printf '{"AI_GATEWAY_TOKEN":"%s"}\n' "$AI_GATEWAY_TOKEN" > .secrets.json
-npx --yes wrangler@4.137.0 deploy --config examples/coding-agents/pi/wrangler.jsonc --secrets-file .secrets.json
+npm run example -- deploy coding-agents/pi -- --secrets-file .secrets.json
 rm .secrets.json
 ```
 
-Later deploys use `npm run example:coding-agents:pi:deploy`. Replace `pi` with the agent you deploy.
+Later deploys use `npm run example -- deploy coding-agents/pi`. Replace `pi` with the agent you deploy.
 
 To clone private repositories, add `GITHUB_TOKEN`. Use a fine-grained token limited to the repositories the agent works on. The agent can use the token for anything that token allows on `github.com`, including pushes if it has write access.
 

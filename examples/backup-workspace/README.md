@@ -4,11 +4,13 @@ Deploy this Worker to back up a directory in a named Container to R2 with `Direc
 
 Done when a directory restored from R2 matches the backup, after its Container was reset.
 
-Create the bucket, then deploy:
+Create the project and the bucket, then deploy:
 
 ```sh
+npm create cloudflare@latest -- backup-workspace --template=cloudflare/sandbox-sdk/examples/backup-workspace
+cd backup-workspace
 npx wrangler r2 bucket create sandbox-backup-workspace-example
-npm run example:backup-workspace:deploy
+npm run deploy
 ```
 
 Make something to back up:

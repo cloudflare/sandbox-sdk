@@ -2,8 +2,10 @@
 
 Run the [OpenCode](https://opencode.ai) coding agent on a GitHub repository. Configuration, routes, and task states are in the [coding agents README](../README.md).
 
+From the repository root:
+
 ```sh
-npm run example:coding-agents:opencode:deploy
+npm run example -- deploy coding-agents/opencode
 ```
 
 `MODEL` is `cloudflare-ai-gateway/<provider>/<model>`, from the model list built into the pinned OpenCode release. List them with `opencode models cloudflare-ai-gateway`.

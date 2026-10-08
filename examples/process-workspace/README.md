@@ -5,7 +5,9 @@ Deploy this Worker to start named background processes in a Container. You can t
 Done when a process started by one request is still running, and its output can be read, from later requests.
 
 ```sh
-npm run example:process-workspace:deploy
+npm create cloudflare@latest -- process-workspace --template=cloudflare/sandbox-sdk/examples/process-workspace
+cd process-workspace
+npm run deploy
 ```
 
 Start a process named `ticker` in the sandbox `agent-1`:

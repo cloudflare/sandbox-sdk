@@ -4,6 +4,13 @@ Deploy this Worker to process objects in a job-scoped S3 prefix from an isolated
 
 The example writes `input.txt`, computes its SHA-256 digest inside the Container, and writes `output.sha256` through the same mount. Done when the digest response matches the input.
 
+## Create a project
+
+```sh
+npm create cloudflare@latest -- artifact-workspace --template=cloudflare/sandbox-sdk/examples/artifact-workspace
+cd artifact-workspace
+```
+
 ## Configure the bucket
 
 Edit `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` in `wrangler.jsonc`. The endpoint must be an HTTP or HTTPS origin for an S3-compatible API.
@@ -11,10 +18,8 @@ Edit `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` in `wrangler.jsonc`. The endpoi
 Add credentials as Worker secrets:
 
 ```sh
-npx --yes wrangler@4.137.0 secret put S3_ACCESS_KEY_ID \
-  --config examples/artifact-workspace/wrangler.jsonc
-npx --yes wrangler@4.137.0 secret put S3_SECRET_ACCESS_KEY \
-  --config examples/artifact-workspace/wrangler.jsonc
+npx wrangler secret put S3_ACCESS_KEY_ID
+npx wrangler secret put S3_SECRET_ACCESS_KEY
 ```
 
 Grant only list access for `sandboxes/*` and object access under that prefix. Keep the real credentials in the Worker.
@@ -22,7 +27,7 @@ Grant only list access for `sandboxes/*` and object access under that prefix. Ke
 ## Deploy and process an artifact
 
 ```sh
-npm run example:artifact-workspace:deploy
+npm run deploy
 ```
 
 Write an input for `job-1`:

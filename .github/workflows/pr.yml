@@ -10,8 +10,8 @@ concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# Together the two jobs run npm run check and npm run test:release. Each job can be re-run on its
-# own when it fails.
+# Together the TypeScript and Shim jobs run npm run check and npm run test:release. Each job can be
+# re-run on its own when it fails.
 jobs:
   typescript:
     name: TypeScript
@@ -35,11 +35,35 @@ jobs:
       - name: Check that examples bundle the local package
         run: npm run examples:check-bundles
 
+      - name: Check that examples name one package and donor image version
+        run: npm run example -- check-versions
+
       - name: Unit tests
         run: npm run test:unit
 
       - name: Test packed package
         run: npm run test:package
+
+  # Installs each example on its own from the registry, as `npm create cloudflare` does, so a
+  # dependency that the repository's hoisted node_modules provides cannot hide.
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Check that each example works outside the repository
+        run: npm run example -- check-standalone
 
   # Every step builds from images/sandbox-tools/Dockerfile on the same Docker daemon, so later
   # steps reuse the stages that shim:check compiled instead of compiling the shim again.
@@ -74,18 +98,20 @@ jobs:
   basic-gate:
     name: ci/basic
     if: always()
-    needs: [typescript, shim]
+    needs: [typescript, examples, shim]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Check job results
         env:
           TYPESCRIPT: ${{ needs.typescript.result }}
+          EXAMPLES: ${{ needs.examples.result }}
           SHIM: ${{ needs.shim.result }}
         run: |
           echo "typescript: $TYPESCRIPT"
+          echo "examples: $EXAMPLES"
           echo "shim: $SHIM"
-          if [[ "$TYPESCRIPT" != "success" || "$SHIM" != "success" ]]; then
+          if [[ "$TYPESCRIPT" != "success" || "$EXAMPLES" != "success" || "$SHIM" != "success" ]]; then
             echo "::error::Required checks did not succeed"
             exit 1
           fi

@@ -4,6 +4,13 @@ Deploy this Worker to run a Vite dev server in a named Container and open it in 
 
 Done when the preview page shows your edit without a reload.
 
+## Create a project
+
+```sh
+npm create cloudflare@latest -- preview-workspace --template=cloudflare/sandbox-sdk/examples/preview-workspace
+cd preview-workspace
+```
+
 ## Configure the preview domain
 
 Replace `preview.example.com` and `example.com` in `wrangler.jsonc` with a domain on your account. Add a proxied wildcard DNS record for `*.preview.example.com`, and a certificate that covers it. Universal SSL covers `*.example.com`, not `*.preview.example.com`.
@@ -11,7 +18,7 @@ Replace `preview.example.com` and `example.com` in `wrangler.jsonc` with a domai
 ## Deploy and preview
 
 ```sh
-npm run example:preview-workspace:deploy
+npm run deploy
 ```
 
 Start the dev server for `agent-1`:

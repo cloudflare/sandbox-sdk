@@ -1,5 +1,5 @@
 {
-  "name": "sandbox-minimal",
+  "name": "sandbox-terminal-workspace-example",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,6 @@
     "types": "wrangler types --include-runtime=false"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "1.0.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {

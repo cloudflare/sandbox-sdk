@@ -5,7 +5,9 @@ Deploy this Worker to write a script into a named Container and run it. For step
 Done when `POST .../run` returns `hello from the sandbox` in `stdout`.
 
 ```sh
-npm run example:workspace:deploy
+npm create cloudflare@latest -- workspace --template=cloudflare/sandbox-sdk/examples/workspace
+cd workspace
+npm run deploy
 ```
 
 ```sh

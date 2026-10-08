@@ -26,11 +26,8 @@ For a stable version, the workflow also replaces the Docker Hub description with
 ## Release a version
 
 1. On a branch, set `version` in `packages/sandbox/package.json` and `crates/sandbox-tools/Cargo.toml`. Run `npm install` and `cargo update --workspace`, so `package-lock.json` and `Cargo.lock` have the same version.
-2. For a stable version, update `examples/minimal`, the template for `npm create cloudflare`:
-   - set the tag in `SANDBOX_TOOLS_IMAGE` in its `Dockerfile` to the new version;
-   - set the `@cloudflare/sandbox` range in its `package.json` to `^<VERSION>`.
-3. Merge the change to `main`. The workflow releases a stable version only from `main`. A prerelease can release from any branch, so you can push its change to a branch instead.
-4. Run the workflow with the version. The workflow checks that it equals the version in `packages/sandbox/package.json`:
+2. Merge the change to `main`. The workflow releases a stable version only from `main`. A prerelease can release from any branch, so you can push its change to a branch instead.
+3. Run the workflow with the version. The workflow checks that it equals the version in `packages/sandbox/package.json`:
 
    ```sh
    gh workflow run release.yml --repo cloudflare/sandbox-sdk --ref main -f version=<VERSION>
@@ -39,7 +36,14 @@ For a stable version, the workflow also replaces the Docker Hub description with
 
    For a prerelease from another branch, pass that branch as `--ref`. The workflow refuses a version that is already on npm, and a prerelease version without a prerelease name to use as the dist-tag, such as `1.1.0-1`. Before it publishes anything, it runs `npm run check` and `npm run test:release`, described in [Testing](testing.md).
 
-5. For a stable version, change the donor image tag in the Sandbox docs to the new version. The Dockerfiles on those pages copy the shim from `docker.io/cloudflare/sandbox:<VERSION>`. They live in `cloudflare/cloudflare-docs`, under `src/content/docs/sandbox/`.
+4. For a stable version, change the donor image tag in the Sandbox docs to the new version. The Dockerfiles on those pages copy the shim from `docker.io/cloudflare/sandbox:<VERSION>`. They live in `cloudflare/cloudflare-docs`, under `src/content/docs/sandbox/`.
+5. For a stable version, move the examples to it once it is published. On a branch from `main`, run:
+
+   ```sh
+   npm run example -- set-version <VERSION>
+   ```
+
+   The script sets the `@cloudflare/sandbox` version in every example's `package.json` and the donor image tag in every example's `Dockerfile`, then runs `npm install` so `package-lock.json` records them. Open a pull request with the change. Its Examples job installs each example from npm, so it passes only after the release is published. A prerelease changes no example.
 
 Done when all of these succeed:
 

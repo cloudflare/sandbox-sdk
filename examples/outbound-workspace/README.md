@@ -5,13 +5,15 @@ Deploy this Worker to run commands in a named Container whose outbound HTTP and 
 Done when changing a rule changes what the next `curl` in the Container can reach, without restarting it.
 
 ```sh
-npm run example:outbound-workspace:deploy
+npm create cloudflare@latest -- outbound-workspace --template=cloudflare/sandbox-sdk/examples/outbound-workspace
+cd outbound-workspace
+npm run deploy
 ```
 
 Optionally, set a token for the `bearer-token` handler to send:
 
 ```sh
-npx wrangler secret put UPSTREAM_TOKEN --config examples/outbound-workspace/wrangler.jsonc
+npx wrangler secret put UPSTREAM_TOKEN
 ```
 
 A new sandbox allows nothing:

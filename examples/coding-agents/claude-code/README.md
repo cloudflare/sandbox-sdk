@@ -2,8 +2,10 @@
 
 Run [Claude Code](https://code.claude.com/docs/en/overview) on a GitHub repository. Configuration, routes, and task states are in the [coding agents README](../README.md).
 
+From the repository root:
+
 ```sh
-npm run example:coding-agents:claude-code:deploy
+npm run example -- deploy coding-agents/claude-code
 ```
 
 `MODEL` is an Anthropic model ID your gateway can serve, for example `claude-sonnet-5`.

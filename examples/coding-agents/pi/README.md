@@ -2,8 +2,10 @@
 
 Run the [Pi](https://github.com/earendil-works/pi) coding agent on a GitHub repository. Configuration, routes, and task states are in the [coding agents README](../README.md).
 
+From the repository root:
+
 ```sh
-npm run example:coding-agents:pi:deploy
+npm run example -- deploy coding-agents/pi
 ```
 
 `MODEL` is a model ID from Pi's `cloudflare-ai-gateway` provider, for example `claude-sonnet-5`.

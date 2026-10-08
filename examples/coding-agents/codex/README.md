@@ -2,8 +2,10 @@
 
 Run the [Codex CLI](https://developers.openai.com/codex/cli) on a GitHub repository. Configuration, routes, and task states are in the [coding agents README](../README.md).
 
+From the repository root:
+
 ```sh
-npm run example:coding-agents:codex:deploy
+npm run example -- deploy coding-agents/codex
 ```
 
 `MODEL` is an OpenAI model ID your gateway can serve, for example `gpt-6-sol`.

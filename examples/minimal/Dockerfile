@@ -1,5 +1,5 @@
-# The donor image ships the helper that Files uses. Keep its tag equal to the
-# installed @cloudflare/sandbox version.
+# The donor image ships the shim that @cloudflare/sandbox runs in the container.
+# Keep its tag equal to the installed @cloudflare/sandbox version.
 ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.0
 FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
 
