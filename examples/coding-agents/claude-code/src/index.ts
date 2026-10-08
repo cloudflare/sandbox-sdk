@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { type AgentCommand, CodingAgentSandbox, type TaskOutcome } from "../../shared/sandbox";
+import { type AgentCommand, CodingAgentSandbox, type TaskOutcome } from "./runner/sandbox";
 
-export { default } from "../../shared/handler";
-export { Outbound } from "../../shared/outbound";
+export { default } from "./runner/handler";
+export { Outbound } from "./runner/outbound";
 
 const GATEWAY_HOST = "gateway.ai.cloudflare.com";
 

@@ -16,7 +16,7 @@ examples/<NAME>/
 
 Each example is a template for `npm create cloudflare`, which copies only the example's folder. So the folder describes a project of its own: `package.json` pins a published version of `@cloudflare/sandbox`, the `Dockerfile` copies the shim from the donor image of the same version, and `tsconfig.json` has no settings from this repository. Inside the repository, the examples are npm workspaces, so the root `package-lock.json` installs them and the root `package.json` sets one Wrangler version for all of them.
 
-`examples/coding-agents` is the exception. It deploys one Worker for each agent, and the agents share code in `coding-agents/shared/`, so `npm create cloudflare` cannot copy an agent on its own.
+An example imports nothing from outside its folder. The coding agents in `examples/coding-agents/<AGENT>` share one runner, whose source is `examples/coding-agents/runner`, and each agent carries a copy of it in `src/runner`. `npm run example -- sync-runner` writes the copies, each identical to its source after a first line that names the source. Edit the runner, never a copy, and run `sync-runner` again. Formatting and linting skip the copies and check the runner instead.
 
 ## Write the Worker
 
@@ -96,8 +96,8 @@ npm run example -- deploy <NAME>
 ## Check it
 
 1. Run `npm run check`.
-2. Run `npm run examples:check-bundles` and `npm run example -- check-versions`. The first bundles each example with the local package and fails unless the bundle took the package from `packages/sandbox/dist`. The second fails unless every example pins the same exact version and every `Dockerfile` that copies the shim defaults to the donor image of that version.
-3. Run `npm run example -- check-standalone <NAME>`. It copies the example's files out of the repository, as `npm create cloudflare` does, installs them from npm, runs `tsc`, and bundles the Worker without building its image. Without a name it checks every example except the coding agents, which need `coding-agents/shared`.
+2. Run `npm run examples:check-bundles` and `npm run example -- check-versions`. The first bundles each example with the local package and fails unless the bundle took the package from `packages/sandbox/dist`. The second fails unless every example pins the same exact version and every `Dockerfile` that copies the shim defaults to the donor image of that version. For a coding agent, also run `npm run example -- sync-runner --check`, which fails when a copy of the runner differs from its source.
+3. Run `npm run example -- check-standalone <NAME>`. It copies the example's files out of the repository, as `npm create cloudflare` does, installs them from npm, runs `tsc`, and bundles the Worker without building its image. Without a name it checks every example.
 4. Deploy the example and follow its README step by step, as described in [Testing](testing.md#test-in-production). Delete the deployment afterwards.
 5. If a docs page covers the same job, link the example from that page's related resources when the designs match. When they differ, link it from the page where the difference is useful, such as a migration page, and say how it differs.
 

@@ -71,7 +71,7 @@ Pull requests into `main` and `next` need two passing checks and an approving re
 
 `ci/basic` comes from `.github/workflows/pr.yml`, on `pull_request`. Its TypeScript and Shim jobs together run `npm run check` and everything in `npm run test:release`, and its Examples job checks each example as a project of its own:
 
-- **TypeScript** runs `check:ts`, `examples:check-bundles`, `example -- check-versions`, `test:unit`, and `test:package`. `examples:check-bundles` bundles every example without deploying it, and fails unless the package came from its local build. `check-versions` fails unless every example names the same package version and donor image tag.
+- **TypeScript** runs `check:ts`, `examples:check-bundles`, `example -- check-versions`, `example -- sync-runner --check`, `test:unit`, and `test:package`. `examples:check-bundles` bundles every example without deploying it, and fails unless the package came from its local build. `check-versions` fails unless every example names the same package version and donor image tag. `sync-runner --check` fails unless each coding agent's copy of the runner matches `examples/coding-agents/runner`.
 - **Examples** runs `example -- check-standalone`, which installs each example outside the repository from npm, type-checks it, and bundles it. See [Examples](examples.md#check-it).
 - **Shim** runs `shim:check` and then the three tests in the table above that need privileged containers. They all build from the same Dockerfile on one Docker daemon, so the shim compiles once.
 

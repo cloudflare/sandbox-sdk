@@ -7,6 +7,7 @@
 //   node tools/example.ts check-standalone [<example>...]
 //   node tools/example.ts check-versions
 //   node tools/example.ts set-version <version>
+//   node tools/example.ts sync-runner [--check]
 //
 // <example> is a folder under examples/, such as workspace or coding-agents/pi.
 import { execFileSync } from "node:child_process";
@@ -37,14 +38,10 @@ const donorArg = /^ARG SANDBOX_TOOLS_IMAGE=(.*)$/m;
 const exactVersion = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const stableVersion = /^\d+\.\d+\.\d+$/;
 
-// The coding agents import ../../shared, which a copy of one agent's folder does not contain.
-// Remove this once each agent folder carries its own copy of the shared modules.
-const notStandalone = new Set([
-  "coding-agents/claude-code",
-  "coding-agents/codex",
-  "coding-agents/opencode",
-  "coding-agents/pi",
-]);
+// Each coding agent carries a copy of the runner modules, so a copy of its folder deploys alone.
+const runnerSource = "examples/coding-agents/runner";
+const runnerDir = join(root, runnerSource);
+const runnerCopyDir = "src/runner";
 
 const wranglerConfig = z.looseObject({
   containers: z
@@ -225,9 +222,7 @@ function checkBundles(examples: string[]): void {
 // what .gitignore leaves out. Then installs the copy from the registry, type-checks it, and
 // bundles it without its containers.
 function checkStandalone(examples: string[]): void {
-  const selected =
-    examples.length > 0 ? examples : allExamples().filter((example) => !notStandalone.has(example));
-  for (const example of selected) {
+  for (const example of examples.length > 0 ? examples : allExamples()) {
     const prefix = `${relative(root, exampleDir(example))}/`;
     const copy = mkdtempSync(join(tmpdir(), "sandbox-example-standalone-"));
     try {
@@ -316,13 +311,67 @@ function setVersion(version: string | undefined): void {
   checkVersions();
 }
 
+// The contents each coding agent's src/runner should have: every module of the canonical runner,
+// after a first line that names its source.
+function runnerCopies(): Map<string, string> {
+  const copies = new Map<string, string>();
+  const modules = readdirSync(runnerDir).filter((name) => name.endsWith(".ts"));
+  for (const file of modules.sort()) {
+    const header = `// Generated from ${runnerSource}/${file} by \`npm run example -- sync-runner\`.`;
+    copies.set(file, `${header}\n${readFileSync(join(runnerDir, file), "utf8")}`);
+  }
+  return copies;
+}
+
+// Writes the canonical runner's modules into each coding agent's src/runner and removes any other
+// file there. With --check, writes nothing and fails unless every copy is current.
+function syncRunner(args: string[]): void {
+  const check = args.includes("--check");
+  const otherArgs = args.filter((arg) => arg !== "--check");
+  if (otherArgs.length > 0) throw new Error(`Unknown option ${otherArgs.join(" ")}`);
+  const copies = runnerCopies();
+  const differences: string[] = [];
+  for (const agent of allExamples().filter((example) => example.startsWith("coding-agents/"))) {
+    const target = join(exampleDir(agent), runnerCopyDir);
+    for (const [file, contents] of copies) {
+      const path = join(target, file);
+      const current = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+      if (current === contents) continue;
+      differences.push(`${current === undefined ? "missing" : "stale"} ${relative(root, path)}`);
+      if (!check) {
+        mkdirSync(target, { recursive: true });
+        writeFileSync(path, contents);
+        console.log(`Wrote ${relative(root, path)}`);
+      }
+    }
+    const extras = existsSync(target)
+      ? readdirSync(target).filter((file) => !copies.has(file))
+      : [];
+    for (const file of extras) {
+      const path = join(target, file);
+      differences.push(`extra ${relative(root, path)}`);
+      if (!check) {
+        rmSync(path, { force: true, recursive: true });
+        console.log(`Removed ${relative(root, path)}`);
+      }
+    }
+  }
+  if (check && differences.length > 0) {
+    throw new Error(
+      `Runner copies differ from ${runnerSource}. Run \`npm run example -- sync-runner\`.\n  ${differences.join("\n  ")}`,
+    );
+  }
+  console.log(`Coding agents carry the current runner from ${runnerSource}`);
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === "deploy") deploy(rest);
 else if (command === "check-bundles") checkBundles(rest);
 else if (command === "check-standalone") checkStandalone(rest);
 else if (command === "check-versions") checkVersions();
 else if (command === "set-version") setVersion(rest[0]);
+else if (command === "sync-runner") syncRunner(rest);
 else
   throw new Error(
-    "Usage: node tools/example.ts deploy <example> | check-bundles [<example>...] | check-standalone [<example>...] | check-versions | set-version <version>",
+    "Usage: node tools/example.ts deploy <example> | check-bundles [<example>...] | check-standalone [<example>...] | check-versions | set-version <version> | sync-runner [--check]",
   );

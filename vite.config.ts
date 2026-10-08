@@ -19,15 +19,27 @@ const agentToolingIgnorePatterns = [
 // The OpenAI Agents API template has its own dependencies, tests, and CI job.
 const standaloneTemplatePatterns = ["openai/**"];
 
+// Copies of examples/coding-agents/runner, which is formatted and linted in their place.
+// `npm run example -- sync-runner --check` keeps them identical to it.
+const generatedPatterns = ["examples/coding-agents/*/src/runner/**"];
+
 export default defineConfig({
   defaultPackage: {
     pack: "./packages/sandbox",
   },
   fmt: {
-    ignorePatterns: [...agentToolingIgnorePatterns, ...standaloneTemplatePatterns],
+    ignorePatterns: [
+      ...agentToolingIgnorePatterns,
+      ...standaloneTemplatePatterns,
+      ...generatedPatterns,
+    ],
   },
   lint: {
-    ignorePatterns: [...agentToolingIgnorePatterns, ...standaloneTemplatePatterns],
+    ignorePatterns: [
+      ...agentToolingIgnorePatterns,
+      ...standaloneTemplatePatterns,
+      ...generatedPatterns,
+    ],
     jsPlugins: [
       {
         name: "anti-slop",

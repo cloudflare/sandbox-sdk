@@ -1,94 +1,39 @@
 # Coding agents
 
-Run a coding agent on a GitHub repository in a named Container. Each sandbox clones one repository, runs one task at a time, and returns the agent's changes as a diff. For a step-by-step guide, see [Build a coding agent runner](https://developers.cloudflare.com/sandbox/get-started/build-a-coding-agent-runner/) and [Run coding agents in a sandbox](https://developers.cloudflare.com/sandbox/coding-agents/).
+Run a coding agent on a repository in a sandbox. As in [Run coding agents in a sandbox](https://developers.cloudflare.com/sandbox/coding-agents/), there are two kinds: agents that run in your sandbox, and agents whose vendor runs the agent loop in its own service.
 
-Done when `GET .../diff` shows the change you asked for.
+## The agent runs in your sandbox
 
-| Agent                                                   | Directory                    | Reports its outcome through                           |
+Each of these templates is a Worker that runs a coding agent on a GitHub repository in a named Container. Each sandbox clones one repository, runs one task at a time, and returns the agent's changes as a diff. The Worker holds the AI Gateway token, and the Container can reach only your gateway and `github.com`. For a step-by-step guide, see [Build a coding agent runner](https://developers.cloudflare.com/sandbox/get-started/build-a-coding-agent-runner/).
+
+| Agent                                                   | Template                     | Reports its outcome through                           |
 | ------------------------------------------------------- | ---------------------------- | ----------------------------------------------------- |
 | [Pi](https://github.com/earendil-works/pi)              | [`pi`](pi)                   | its JSON events; it exits `0` when a model call fails |
 | [Claude Code](https://code.claude.com/docs/en/overview) | [`claude-code`](claude-code) | the `is_error` field of its final `result` event      |
 | [Codex](https://developers.openai.com/codex/cli)        | [`codex`](codex)             | its exit code and last message                        |
 | [OpenCode](https://opencode.ai)                         | [`opencode`](opencode)       | its exit code and JSON events                         |
 
-Each agent directory is a separate Worker with its own image and `wrangler.jsonc`. Deploy only the agent you want. The Worker code they share is in [`shared`](shared): the Durable Object that clones, runs, and tracks tasks, the outbound policy, and the HTTP routes. Each agent's `src/index.ts` supplies its command line and how to read its outcome. To copy an agent out of this repository, copy `shared` with it.
+Each template is a project of its own, with its own Worker, image, and `wrangler.jsonc`. Its README creates a project with `npm create cloudflare`, deploys it, and runs a task.
 
-## Network access
+### The runner
 
-The Container has no internet access. An `Outbound` entrypoint in the Worker receives every HTTP request on port 80 and HTTPS request on port 443 from the Container, and allows two hosts:
+The four templates share one runner: the Durable Object that clones, runs, and tracks tasks (`sandbox.ts`), the outbound policy (`outbound.ts`), and the HTTP routes (`handler.ts`). Its source is in [`runner`](runner). `npm create cloudflare` copies only one template's folder, so each template carries a generated copy of the runner in `src/runner`. Each template's `src/index.ts` adds what is specific to its agent: the command line and how to read the outcome.
 
-- `gateway.ai.cloudflare.com`, only under your account and gateway. The Worker adds the gateway token, so the Container never holds it.
-- `github.com`. The Worker adds `GITHUB_TOKEN` when it is set.
-
-Every other host gets `403`. Connections to other ports time out.
-
-## Configure
-
-Set `AI_GATEWAY_ACCOUNT_ID` and `AI_GATEWAY_ID` in the agent's `wrangler.jsonc`. `MODEL` is a model ID in the format the agent expects; its README says which. To attach [custom metadata](https://developers.cloudflare.com/ai-gateway/observability/custom-metadata/) to each model request, set `AI_GATEWAY_METADATA` to a JSON object, for example `{"project": "my-app"}`.
-
-Create a Cloudflare API token with the **AI Gateway Run** permission. Deploy from the repository root, after `npm install`. The first deploy of a Worker with required secrets reads them from a file:
+To change the runner, edit the files in `runner`, then write the copies from the repository root:
 
 ```sh
-printf '{"AI_GATEWAY_TOKEN":"%s"}\n' "$AI_GATEWAY_TOKEN" > .secrets.json
-npm run example -- deploy coding-agents/pi -- --secrets-file .secrets.json
-rm .secrets.json
+npm run example -- sync-runner
 ```
 
-Later deploys use `npm run example -- deploy coding-agents/pi`. Replace `pi` with the agent you deploy.
+Do not edit a template's `src/runner` in this repository. CI runs `npm run example -- sync-runner --check`, which fails when a copy differs from `runner`.
 
-To clone private repositories, add `GITHUB_TOKEN`. Use a fine-grained token limited to the repositories the agent works on. The agent can use the token for anything that token allows on `github.com`, including pushes if it has write access.
+## The vendor runs the agent loop
 
-## Run a task
+The vendor's service runs the agent loop and sends commands and file edits to sandboxes in your Cloudflare account. Each template gives every session its own sandbox. In the Devin, Cursor, and OpenAI Agents API templates, the vendor's worker process runs inside the sandbox, so the sandbox also holds a vendor credential.
 
-Clone a repository into `agent-1`:
-
-```sh
-curl --request POST "$WORKER_URL/sandboxes/agent-1/repository" \
-  --header "content-type: application/json" \
-  --data '{"url": "https://github.com/OWNER/REPOSITORY"}'
-```
-
-Start a task. The body is the prompt:
-
-```sh
-curl --request POST "$WORKER_URL/sandboxes/agent-1/task" \
-  --data 'Add a test for the parser.'
-```
-
-The response is `202`. A second task while one runs returns `409`. The prompt is one argument of the agent's command, so a prompt of 128 KiB or more returns `413`.
-
-Poll the task:
-
-```sh
-curl "$WORKER_URL/sandboxes/agent-1/task"
-```
-
-`state` is one of:
-
-- `running`
-- `succeeded`, with the agent's final reply
-- `failed`, with the error
-- `lost`, when the agent or its Container stopped before the agent finished
-- `none`, when no task has run in this Container
-
-Stream the agent's events with `GET .../events`.
-
-You do not need to poll to keep the task alive. While the agent runs, an alarm checks the task every minute. Each check keeps the Container awake.
-
-Read the changes:
-
-```sh
-curl "$WORKER_URL/sandboxes/agent-1/diff"
-```
-
-Reset the Container:
-
-```sh
-curl --request DELETE "$WORKER_URL/sandboxes/agent-1/execution"
-```
-
-The next clone starts on a fresh disk.
-
-The agents run without their own permission prompts or sandboxes. The Container is the sandbox: the agent can run any command in it, but it reaches only the two hosts above.
-
-Authenticate in production. Anyone who can reach this Worker can spend your AI Gateway budget.
+| Agent                                                                                                   | Template                                                                                  |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [Devin](https://developers.cloudflare.com/sandbox/coding-agents/devin/)                                 | [`templates/devin`](../../templates/devin)                                                |
+| [Cursor Cloud Agents](https://developers.cloudflare.com/sandbox/coding-agents/cursor/)                  | [`anysphere/cloudflare-workers`](https://github.com/anysphere/cloudflare-workers)         |
+| [Claude Managed Agents](https://developers.cloudflare.com/sandbox/coding-agents/claude-managed-agents/) | [`cloudflare/claude-managed-agents`](https://github.com/cloudflare/claude-managed-agents) |
+| [OpenAI Agents API](https://developers.cloudflare.com/sandbox/coding-agents/openai-agents-api/)         | [`templates/openai-agents-api`](../../templates/openai-agents-api)                        |

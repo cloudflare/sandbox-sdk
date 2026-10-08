@@ -38,6 +38,9 @@ jobs:
       - name: Check that examples name one package and donor image version
         run: npm run example -- check-versions
 
+      - name: Check that coding agents carry the current runner
+        run: npm run example -- sync-runner --check
+
       - name: Unit tests
         run: npm run test:unit
 
