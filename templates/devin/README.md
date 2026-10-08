@@ -8,14 +8,14 @@ Done when `curl https://<your-worker>.workers.dev/` returns `{"service":"devin-o
 
 You need a Devin outpost ID and a Devin service user token with the **Run outpost workers** permission.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/devin)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/templates/devin)
 
 The Deploy flow asks for `DEVIN_OUTPOST_ID` and `DEVIN_API_TOKEN`, then creates the Worker, its cron trigger, the Durable Object namespace, and the Container image.
 
 To deploy from your machine instead, you need Node.js 24 and a running Docker daemon:
 
 ```sh
-npm create cloudflare@latest -- devin-outpost --template=cloudflare/sandbox-sdk/devin
+npm create cloudflare@latest -- devin-outpost --template=cloudflare/sandbox-sdk/templates/devin
 cd devin-outpost
 ```
 

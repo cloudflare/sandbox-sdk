@@ -16,8 +16,8 @@ const agentToolingIgnorePatterns = [
   "tools/oxlint/anti-slop/**",
 ];
 
-// The OpenAI Agents API template has its own dependencies, tests, and CI job.
-const standaloneTemplatePatterns = ["openai/**"];
+// Each template has its own dependencies and is checked by the Templates workflow.
+const standaloneTemplatePatterns = ["templates/**"];
 
 // Copies of examples/coding-agents/runner, which is formatted and linted in their place.
 // `npm run example -- sync-runner --check` keeps them identical to it.

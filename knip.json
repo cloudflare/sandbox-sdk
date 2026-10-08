@@ -3,8 +3,8 @@
   "workspaces": {
     ".": {
       // Each coding agent imports a copy of the runner that tools/example.ts writes, not the runner.
-      "entry": ["devin/src/index.ts", "examples/coding-agents/runner/*.ts"],
-      "ignore": ["openai/**", "tools/oxlint/anti-slop/**"],
+      "entry": ["examples/coding-agents/runner/*.ts"],
+      "ignore": ["templates/**", "tools/oxlint/anti-slop/**"],
       // The `wrangler` override pins every workspace to this version, and tools/example.ts runs it.
       "ignoreDependencies": ["cloudflare", "wrangler"]
     },

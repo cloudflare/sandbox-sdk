@@ -7,7 +7,7 @@ The [executor Worker](../README.md) must already be deployed and configured for 
 ## Install
 
 ```bash
-cd openai/agents-api/basic
+cd templates/openai-agents-api/basic
 npm install
 cp .dev.vars.example .dev.vars
 ```
@@ -75,7 +75,7 @@ curl --fail-with-body \
 
 ## Deploy
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/openai/agents-api/basic)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/templates/openai-agents-api/basic)
 
 For manual deployment:
 

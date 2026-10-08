@@ -15,7 +15,7 @@ Run self-hosted OpenAI Agents API sessions in Cloudflare Containers. Each Durabl
 
 You need a Cloudflare account with Containers access and access to the OpenAI Agents API.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/openai/agents-api)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/templates/openai-agents-api)
 
 Configure these settings:
 
@@ -48,7 +48,7 @@ For local development:
 
 ```bash
 git clone https://github.com/cloudflare/sandbox-sdk.git
-cd sandbox-sdk/openai/agents-api
+cd sandbox-sdk/templates/openai-agents-api
 npm install
 cp .dev.vars.example .dev.vars
 npm run dev
@@ -78,7 +78,7 @@ A configured deployment returns:
 
 ## Deploy manually
 
-Manual deployment requires Node.js 24, npm, Wrangler, and a running Docker daemon. From `openai/agents-api` in an installed checkout, log in to Wrangler:
+Manual deployment requires Node.js 24, npm, Wrangler, and a running Docker daemon. From `templates/openai-agents-api` in an installed checkout, log in to Wrangler:
 
 ```bash
 npx wrangler login

@@ -1,0 +1,66 @@
+name: Templates
+
+# Each template under templates/ is a standalone project with its own dependencies, so it is
+# installed and checked on its own rather than by the root workflows.
+on:
+  pull_request:
+    paths:
+      - "templates/**"
+      - ".github/workflows/templates.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: templates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  devin:
+    name: templates/devin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: templates/devin
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # The template has no lockfile: a project created from it resolves its own.
+      - run: npm install --no-package-lock --no-audit --no-fund
+
+      - name: Type check
+        run: npm run typecheck
+
+  openai-agents-api:
+    name: templates/openai-agents-api
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: templates/openai-agents-api
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: templates/openai-agents-api/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
