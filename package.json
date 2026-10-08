@@ -55,7 +55,7 @@
     "@types/node": "24.13.3",
     "knip": "6.34.0",
     "typescript": "6.0.3",
-    "vite-plus": "0.3.0",
+    "vite-plus": "0.3.3",
     "zod": "4.5.4"
   },
   "engines": {
