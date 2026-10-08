@@ -32,6 +32,9 @@ jobs:
       - name: Check
         run: npm run check:ts
 
+      - name: Check that examples bundle the local package
+        run: npm run examples:check-bundles
+
       - name: Unit tests
         run: npm run test:unit
 

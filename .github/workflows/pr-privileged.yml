@@ -156,9 +156,6 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
-      - name: Build the package and sandbox-tools image
-        run: npx vp pack && npm run shim:build
-
       - name: Deploy
         run: |
           set -euo pipefail
@@ -182,20 +179,11 @@ jobs:
           };
           TS
 
-          # Rename in the config, not with --name: Wrangler names the Container application
-          # after the config's name even when --name is given.
-          config=examples/workspace/wrangler.ci.json
-          node -e '
-            const fs = require("node:fs");
-            const ts = require("typescript");
-            const [source, target, name] = process.argv.slice(1);
-            const { config, error } = ts.parseConfigFileTextToJson(source, fs.readFileSync(source, "utf8"));
-            if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
-            fs.writeFileSync(target, JSON.stringify({ ...config, name, main: "src/ci-entry.ts" }, null, 2));
-          ' examples/workspace/wrangler.jsonc "$config" "$WORKER"
-          # The Wrangler version that the package scripts pin.
-          npx --yes wrangler@4.137.0 deploy --config "$config" --containers-rollout immediate \
-            --var "CI_TOKEN:$token"
+          # The helper builds the package and the shim, then deploys with both. It renames the
+          # Worker in the config, because Wrangler names the Container application after the
+          # config's name even when --name is given.
+          node tools/example.ts deploy workspace --name "$WORKER" --main src/ci-entry.ts -- \
+            --containers-rollout immediate --var "CI_TOKEN:$token"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

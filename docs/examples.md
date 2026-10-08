@@ -58,7 +58,7 @@ Follow the shape of the existing READMEs:
 
 ## Wire it into the repository
 
-1. Add `example:<NAME>:deploy` and `example:<NAME>:types` scripts to the root `package.json`, copying an existing pair. Deploy scripts run `npm run shim:build` first when the example uses the shim, and every script uses the pinned Wrangler version.
+1. Add `example:<NAME>:deploy` and `example:<NAME>:types` scripts to the root `package.json`, copying an existing pair. Deploy scripts run `node tools/example.ts deploy <NAME>`, which deploys with this repository's package build and shim.
 2. The root `tsconfig.json` includes `examples/**`, and maps `@cloudflare/sandbox` to the package source, so `npm run check` type-checks the example against the current package.
 3. Knip treats `examples/*/src/index.ts` as entry points, and `.gitignore` ignores `examples/*/worker-configuration.d.ts`. An example with a deeper layout, like `coding-agents`, needs its own globs in `knip.json` and `.gitignore`.
 

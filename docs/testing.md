@@ -71,7 +71,7 @@ Pull requests into `main` and `next` need two passing checks and an approving re
 
 `ci/basic` comes from `.github/workflows/pr.yml`, on `pull_request`. Its two jobs together run `npm run check` and everything in `npm run test:release`:
 
-- **TypeScript** runs `check:ts`, `test:unit`, and `test:package`.
+- **TypeScript** runs `check:ts`, `examples:check-bundles`, `test:unit`, and `test:package`. `examples:check-bundles` bundles every example without deploying it, and fails unless the package came from its local build.
 - **Shim** runs `shim:check` and then the three tests in the table above that need privileged containers. They all build from the same Dockerfile on one Docker daemon, so the shim compiles once.
 
 When a job fails, re-run only that job.
@@ -98,7 +98,7 @@ Local tests cannot show everything a deployed sandbox does. Under `wrangler dev`
    npm run example:workspace:deploy
    ```
 
-   The deploy scripts build `sandbox-tools:local` first when the example uses the shim, and use the Wrangler version pinned in `package.json`.
+   The deploy scripts run `tools/example.ts`, which builds the package and, when the example uses the shim, `sandbox-tools:local`. It deploys from a config written next to the example's own, which bundles the package from `packages/sandbox/dist` and builds the image from the local shim. Wrangler is the version in `package-lock.json`.
 
 3. Follow the `curl` steps in the example's README. If your account puts `workers.dev` behind Cloudflare Access, add the header `cf-access-token: $(cloudflared access token -app=<WORKER_URL>)` to each request.
 4. Delete what you deployed. `npx wrangler delete --name <WORKER_NAME>` deletes the Worker. At Wrangler 4.137.0, Wrangler cannot delete the container application of a Durable Object, so delete it with the Containers API: request `GET /accounts/<ACCOUNT_ID>/containers/applications/<ID>` and check that the name is yours, then send `DELETE` to the same path. Delete by exact name or ID, never by a pattern.
