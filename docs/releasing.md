@@ -4,13 +4,14 @@ This page explains how a maintainer publishes a version of `@cloudflare/sandbox`
 
 ## What a release publishes
 
-The `Release` workflow (`.github/workflows/release.yml`) publishes three things with the same version:
+The `Release` workflow (`.github/workflows/release.yml`) publishes four things with the same version:
 
-| What                                             | Where                                                                                                                    |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `@cloudflare/sandbox@<VERSION>`, with provenance | npm. A stable version gets the `latest` dist-tag. A prerelease version gets its prerelease name: `1.1.0-rc.0` gets `rc`. |
-| `cloudflare/sandbox:<VERSION>`                   | Docker Hub. The donor image from the `image` target of `images/sandbox-tools/Dockerfile`, for `linux/amd64`.             |
-| `@cloudflare/sandbox@<VERSION>`                  | An annotated Git tag on the released commit.                                                                             |
+| What                                             | Where                                                                                                                                                                             |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@cloudflare/sandbox@<VERSION>`, with provenance | npm. A stable version gets the `latest` dist-tag. A prerelease version gets its prerelease name: `1.1.0-rc.0` gets `rc`.                                                          |
+| `cloudflare/sandbox:<VERSION>`                   | Docker Hub. The donor image from the `image` target of `images/sandbox-tools/Dockerfile`, for `linux/amd64`.                                                                      |
+| `@cloudflare/sandbox@<VERSION>`                  | An annotated Git tag on the released commit.                                                                                                                                      |
+| `@cloudflare/sandbox@<VERSION>`                  | A GitHub release on that tag. Its notes list the pull requests merged since the previous release. A stable version becomes the latest release, and a prerelease is marked as one. |
 
 The package and the image share a version because application images copy the shim from the donor image whose tag matches the installed package. See [Shim protocol](shim-protocol.md#versioning). The workflow pushes the image before it publishes the package, so a published package always has its image.
 
@@ -46,7 +47,10 @@ Done when all of these succeed:
 npm view @cloudflare/sandbox@<VERSION> dist.attestations.provenance
 docker buildx imagetools inspect docker.io/cloudflare/sandbox:<VERSION>
 git ls-remote --exit-code --tags origin "refs/tags/@cloudflare/sandbox@<VERSION>"
+gh release view "@cloudflare/sandbox@<VERSION>" --repo cloudflare/sandbox-sdk
 ```
+
+The generated notes list only pull requests. For a release that needs more, such as a major version, edit the notes on GitHub afterwards.
 
 ## When a run fails
 
@@ -59,6 +63,15 @@ What to do depends on the last step that succeeded:
   ```sh
   git tag --annotate --message "@cloudflare/sandbox@<VERSION>" "@cloudflare/sandbox@<VERSION>" <COMMIT>
   git push origin "refs/tags/@cloudflare/sandbox@<VERSION>"
+  ```
+
+  Then create the GitHub release as in the next case.
+
+- **`Tag the release` succeeded and `Create the GitHub release` failed:** everything else is published. Create the release from the tag. For a prerelease, replace `--latest` with `--prerelease --latest=false`:
+
+  ```sh
+  gh release create "@cloudflare/sandbox@<VERSION>" --repo cloudflare/sandbox-sdk --verify-tag \
+    --title "@cloudflare/sandbox@<VERSION>" --generate-notes --latest
   ```
 
 npm never accepts a version number twice, even after an unpublish. To correct a published release, release a new version.
