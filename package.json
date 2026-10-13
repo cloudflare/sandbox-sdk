@@ -33,7 +33,7 @@
     "typescript": "6.0.3",
     "vite-plus": "0.3.3",
     "wrangler": "4.148.0",
-    "zod": "4.5.4"
+    "zod": "4.6.5"
   },
   "overrides": {
     "wrangler": "$wrangler"
