@@ -294,8 +294,12 @@ function setVersion(version: string | undefined): void {
     const dir = exampleDir(example);
     if (pinnedVersion(dir) !== undefined) {
       const path = join(dir, "package.json");
-      const manifest = examplePackage.parse(JSON.parse(readFileSync(path, "utf8")));
-      manifest.dependencies = { ...manifest.dependencies, [packageName]: version };
+      // A record keeps the keys in file order. examplePackage would put its own keys first.
+      const manifest = z
+        .record(z.string(), z.unknown())
+        .parse(JSON.parse(readFileSync(path, "utf8")));
+      const { dependencies } = examplePackage.parse(manifest);
+      manifest.dependencies = { ...dependencies, [packageName]: version };
       writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
     }
     if (donorVersion(dir) !== undefined) {
