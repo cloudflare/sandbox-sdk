@@ -257,7 +257,8 @@ jobs:
           }
           failed=0
 
-          # Wrangler cannot delete Durable Object-managed applications, so use the API.
+          # Deleting the Worker leaves its Container applications running
+          # (cloudflare/workers-sdk#16008), so delete them separately.
           if found=$(applications); then
             while read -r id name; do
               [[ -z "$id" ]] && continue

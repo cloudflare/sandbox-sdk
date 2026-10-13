@@ -102,8 +102,8 @@ Local tests cannot show everything a deployed sandbox does. Under `wrangler dev`
    `tools/example.ts` builds the package and, when the example uses the shim, `sandbox-tools:local`. It deploys from a config written next to the example's own, which bundles the package from `packages/sandbox/dist` and builds the image from the local shim. Wrangler is the version in `package-lock.json`. See [Examples](examples.md#deploy-an-example).
 
 3. Follow the `curl` steps in the example's README. If your account puts `workers.dev` behind Cloudflare Access, add the header `cf-access-token: $(cloudflared access token -app=<WORKER_URL>)` to each request.
-4. Delete what you deployed. `npx wrangler delete --name <WORKER_NAME>` deletes the Worker. At Wrangler 4.137.0, Wrangler cannot delete the container application of a Durable Object, so delete it with the Containers API: request `GET /accounts/<ACCOUNT_ID>/containers/applications/<ID>` and check that the name is yours, then send `DELETE` to the same path. Delete by exact name or ID, never by a pattern.
+4. Delete what you deployed. `npx wrangler delete --name <WORKER_NAME>` deletes the Worker but leaves its container application running ([workers-sdk#16008](https://github.com/cloudflare/workers-sdk/issues/16008)). Find the application in `npx wrangler containers list`, where it's named `<WORKER_NAME>-<class name in lowercase>`, and delete it with `npx wrangler containers delete <ID>`. Delete the image the deploy pushed with `npx wrangler containers images delete <IMAGE>:<TAG>`, from `npx wrangler containers images list`. Delete by exact ID or tag, never by a pattern.
 
-Done when the README's steps give the expected responses and the Worker and container application are gone.
+Done when the README's steps give the expected responses and the Worker, container application, and image are gone.
 
 Workers Observability records each request, log, and exception, which helps when a step fails. A Durable Object invocation marked `canceled` is often a client that disconnected, not a failure in the container.
