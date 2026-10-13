@@ -8,7 +8,7 @@
     "types": "wrangler types --include-runtime=false"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "1.0.0",
+    "@cloudflare/sandbox": "1.0.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
