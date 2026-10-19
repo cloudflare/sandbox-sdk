@@ -109,7 +109,7 @@ jobs:
 
       - name: Remove ok-to-test
         if: steps.check.outputs.revoke == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
