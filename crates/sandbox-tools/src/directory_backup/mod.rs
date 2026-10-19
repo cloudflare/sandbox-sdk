@@ -284,7 +284,3 @@ fn backup<W: Write>(
     let encoder = capture::capture(&root, &selection, encoder, &aborted)?;
     encoder.finish().map_err(Failure::writing)?.finish()
 }
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}

@@ -12,9 +12,9 @@ use std::thread::JoinHandle;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use super::Failure;
 use super::lifeline::{Lifeline, SocketGuard};
-use super::{Failure, hex};
-use crate::http;
+use crate::{hex, http};
 
 /// R2 requires every part but the last to have the same size.
 pub(super) const PART_SIZE: usize = 16 * 1024 * 1024;
@@ -323,7 +323,7 @@ impl PartSink {
         parts.sort_by_key(|part| part.part_number);
         Ok(Uploaded {
             size: self.size,
-            sha256: hex(&self.hasher.clone().finalize()),
+            sha256: hex::encode(&self.hasher.clone().finalize()),
             parts,
         })
     }
@@ -462,7 +462,7 @@ impl RangeReader {
 
     /// Returns the byte count and SHA-256 of everything read so far.
     pub(super) fn digest(&self) -> (u64, String) {
-        (self.count, hex(&self.hasher.clone().finalize()))
+        (self.count, hex::encode(&self.hasher.clone().finalize()))
     }
 
     pub(super) fn exhausted(&self) -> bool {
@@ -547,7 +547,7 @@ mod tests {
         seen.sort();
         assert_eq!(seen, vec![(1, 4), (2, 4)]);
         assert_eq!(uploaded.size, 8);
-        assert_eq!(uploaded.sha256, hex(&Sha256::digest(b"abcdefgh")));
+        assert_eq!(uploaded.sha256, hex::encode(&Sha256::digest(b"abcdefgh")));
         let numbers: Vec<_> = uploaded.parts.iter().map(|part| part.part_number).collect();
         assert_eq!(numbers, vec![1, 2]);
         assert_eq!(uploaded.parts[1].etag, "etag-2");
@@ -608,7 +608,10 @@ mod tests {
 
         assert_eq!(bytes, object);
         assert!(reader.exhausted());
-        assert_eq!(reader.digest(), (1000, hex(&Sha256::digest(&object))));
+        assert_eq!(
+            reader.digest(),
+            (1000, hex::encode(&Sha256::digest(&object)))
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 10);
     }
 
