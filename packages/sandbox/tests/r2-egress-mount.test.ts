@@ -6,7 +6,11 @@ import {
   type R2EgressParams,
   r2EgressHandler
 } from '../src/storage-mount/r2-egress-handler';
-import type { S3CredentialProxyParams } from '../src/storage-mount/types';
+import type {
+  MountInfo,
+  R2BindingMountInfo,
+  S3CredentialProxyParams
+} from '../src/storage-mount/types';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -1088,7 +1092,10 @@ describe('Sandbox R2 egress mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       { MY_BUCKET: createMockR2Bucket() }
     );
-    const existingMount = {
+    const { activeMounts } = sandbox as unknown as {
+      activeMounts: Map<string, MountInfo>;
+    };
+    const existingMount: R2BindingMountInfo = {
       mountId: 'existing',
       mountType: 'r2-egress',
       bucket: 'MY_BUCKET',
@@ -1098,26 +1105,29 @@ describe('Sandbox R2 egress mounts', () => {
       mounted: true,
       readOnly: false
     };
-    (sandbox as any).activeMounts.set('/mnt/data', existingMount);
+    activeMounts.set('/mnt/data', existingMount);
     const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
     const deleteAdditionalHeaderFile = vi.fn().mockResolvedValue(undefined);
     const execInternal = vi.fn(async (command: string) =>
       createExecResult(command)
     );
+    const configureR2EgressOutbound = vi.fn().mockResolvedValue(undefined);
     Object.assign(sandbox as object, {
       execInternal,
       deletePasswordFile,
-      deleteAdditionalHeaderFile
+      deleteAdditionalHeaderFile,
+      configureR2EgressOutbound
     });
 
     await expect(
       sandbox.mountBucket('MY_BUCKET', '/mnt/data', {})
     ).rejects.toThrow(/already in use/);
 
-    expect((sandbox as any).activeMounts.get('/mnt/data')).toBe(existingMount);
+    expect(activeMounts.get('/mnt/data')).toBe(existingMount);
     expect(deletePasswordFile).not.toHaveBeenCalled();
     expect(deleteAdditionalHeaderFile).not.toHaveBeenCalled();
     expect(execInternal).not.toHaveBeenCalled();
+    expect(configureR2EgressOutbound).not.toHaveBeenCalled();
   });
 
   it('throws a clear error when ContainerProxy is not exported for R2 binding mounts', async () => {

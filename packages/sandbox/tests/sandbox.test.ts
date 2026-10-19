@@ -10,6 +10,7 @@ import {
 } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 import { SessionInitInvalidatedError } from '../src/session-init';
+import type { MountInfo } from '../src/storage-mount/types';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -3900,8 +3901,11 @@ describe('Sandbox - Automatic Session Management', () => {
     it('keeps an existing mount when mounting the same path again fails validation', async () => {
       mockMountScript({ exitCode: 0 });
       await sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions);
-      const existingMount = (sandbox as any).activeMounts.get('/mnt/data');
-      expect(existingMount.mounted).toBe(true);
+      const { activeMounts } = sandbox as unknown as {
+        activeMounts: Map<string, MountInfo>;
+      };
+      const existingMount = activeMounts.get('/mnt/data');
+      expect(existingMount?.mounted).toBe(true);
 
       const issuedCommands: string[] = [];
       vi.mocked(sandbox.client.commands.execute).mockImplementation(
@@ -3926,9 +3930,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(issuedCommands.some((c) => c.includes('fusermount -u'))).toBe(
         false
       );
-      expect((sandbox as any).activeMounts.get('/mnt/data')).toBe(
-        existingMount
-      );
+      expect(activeMounts.get('/mnt/data')).toBe(existingMount);
     });
   });
 });

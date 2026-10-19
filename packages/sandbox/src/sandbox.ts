@@ -2138,8 +2138,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           );
         }
       }
-      const remainingParams = this.getR2EgressParams();
-      await this.configureR2EgressOutbound(remainingParams).catch(() => {});
+      if (reservedMountPath) {
+        await this.configureR2EgressOutbound(this.getR2EgressParams()).catch(
+          () => {}
+        );
+      }
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {
