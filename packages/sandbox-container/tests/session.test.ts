@@ -2,12 +2,24 @@
  * Session Tests - FIFO-based persistent shell execution
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from '@repo/shared';
 import { Session } from '../src/session';
+
+function interceptWatchers(onCreate: (watcher: fs.FSWatcher) => void) {
+  const realWatch = fs.watch;
+  return spyOn(fs, 'watch').mockImplementation(((
+    ...args: Parameters<typeof fs.watch>
+  ) => {
+    const watcher = realWatch(...args);
+    onCreate(watcher);
+    return watcher;
+  }) as typeof fs.watch);
+}
 
 describe('Session', () => {
   let session: Session;
@@ -143,6 +155,84 @@ describe('Session', () => {
       expect(result.command).toBe('echo "Hello World"');
       expect(result.duration).toBeGreaterThan(0);
       expect(result.timestamp).toBeDefined();
+    });
+
+    it('survives an error from the exit-code directory watcher', async () => {
+      // Bun's Linux watcher emits ENOENT when another command's log file is
+      // deleted while it scans the session directory.
+      const watchSpy = interceptWatchers((watcher) => {
+        queueMicrotask(() =>
+          watcher.emit(
+            'error',
+            Object.assign(new Error('ENOENT: no such file or directory'), {
+              code: 'ENOENT',
+              syscall: 'watch'
+            })
+          )
+        );
+      });
+
+      try {
+        const result = await session.exec('echo ok');
+
+        expect(watchSpy).toHaveBeenCalled();
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe('ok');
+      } finally {
+        watchSpy.mockRestore();
+      }
+    });
+
+    it('stops watching for the exit code when the shell dies', async () => {
+      const closes: ReturnType<typeof spyOn>[] = [];
+      const watchSpy = interceptWatchers((watcher) => {
+        closes.push(spyOn(watcher, 'close'));
+      });
+
+      try {
+        await expect(session.exec('exit 7')).rejects.toThrow();
+
+        expect(closes).toHaveLength(1);
+        expect(closes[0]).toHaveBeenCalled();
+      } finally {
+        watchSpy.mockRestore();
+      }
+    });
+
+    it('rejects when the shell dies after a failed exit-code read', async () => {
+      // destroy() can delete the exit code file between the poll's existence
+      // check and its read.
+      const realFile = Bun.file;
+      let exitChecks = 0;
+      const fileSpy = spyOn(Bun, 'file').mockImplementation(((
+        path: string | URL,
+        options?: BlobPropertyBag
+      ) => {
+        const file = realFile(path, options);
+        if (typeof path !== 'string' || !path.endsWith('.exit')) {
+          return file;
+        }
+        return Object.assign(Object.create(file), {
+          exists: async () => exitChecks++ > 0,
+          text: async () => {
+            throw new Error('ENOENT: no such file or directory');
+          }
+        });
+      }) as typeof Bun.file);
+
+      try {
+        const outcome = await Promise.race([
+          session.exec('sleep 0.3; exit 7').then(
+            () => 'resolved',
+            () => 'rejected'
+          ),
+          Bun.sleep(2000).then(() => 'pending')
+        ]);
+
+        expect(outcome).toBe('rejected');
+      } finally {
+        fileSpy.mockRestore();
+      }
     });
 
     it('should capture stderr correctly', async () => {
