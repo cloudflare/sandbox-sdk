@@ -10,6 +10,17 @@ import { join } from 'node:path';
 import type { Logger } from '@repo/shared';
 import { Session } from '../src/session';
 
+function interceptWatchers(onCreate: (watcher: fs.FSWatcher) => void) {
+  const realWatch = fs.watch;
+  return spyOn(fs, 'watch').mockImplementation(((
+    ...args: Parameters<typeof fs.watch>
+  ) => {
+    const watcher = realWatch(...args);
+    onCreate(watcher);
+    return watcher;
+  }) as typeof fs.watch);
+}
+
 describe('Session', () => {
   let session: Session;
   let testDir: string;
@@ -149,11 +160,7 @@ describe('Session', () => {
     it('survives an error from the exit-code directory watcher', async () => {
       // Bun's Linux watcher emits ENOENT when another command's log file is
       // deleted while it scans the session directory.
-      const realWatch = fs.watch;
-      const watchSpy = spyOn(fs, 'watch').mockImplementation(((
-        ...args: Parameters<typeof fs.watch>
-      ) => {
-        const watcher = realWatch(...args);
+      const watchSpy = interceptWatchers((watcher) => {
         queueMicrotask(() =>
           watcher.emit(
             'error',
@@ -163,8 +170,7 @@ describe('Session', () => {
             })
           )
         );
-        return watcher;
-      }) as typeof fs.watch);
+      });
 
       try {
         const result = await session.exec('echo ok');
@@ -172,6 +178,22 @@ describe('Session', () => {
         expect(watchSpy).toHaveBeenCalled();
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe('ok');
+      } finally {
+        watchSpy.mockRestore();
+      }
+    });
+
+    it('stops watching for the exit code when the shell dies', async () => {
+      const closes: ReturnType<typeof spyOn>[] = [];
+      const watchSpy = interceptWatchers((watcher) => {
+        closes.push(spyOn(watcher, 'close'));
+      });
+
+      try {
+        await expect(session.exec('exit 7')).rejects.toThrow();
+
+        expect(closes).toHaveLength(1);
+        expect(closes[0]).toHaveBeenCalled();
       } finally {
         watchSpy.mockRestore();
       }
