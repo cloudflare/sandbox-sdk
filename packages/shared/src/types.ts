@@ -1083,10 +1083,7 @@ export interface ExecutionSession {
     path: string,
     options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
-  readFileStream(
-    path: string,
-    options?: { encoding?: 'base64' }
-  ): Promise<ReadableStream<Uint8Array>>;
+  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
     options?: Omit<WatchOptions, 'sessionId'>
@@ -1416,10 +1413,7 @@ export interface ISandbox {
     path: string,
     options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
-  readFileStream(
-    path: string,
-    options?: { encoding?: 'base64'; sessionId?: string }
-  ): Promise<ReadableStream<Uint8Array>>;
+  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
     options?: WatchOptions
