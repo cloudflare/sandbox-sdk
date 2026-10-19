@@ -14,6 +14,14 @@ const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
 const MAX_BACKOFF_MS = 30_000;
 const SYNC_CONCURRENCY = 5;
 
+// A base64 writeFile travels in one control frame, which the container caps
+// at 16 MiB. Larger objects stream into the container instead.
+const STREAM_TO_CONTAINER_THRESHOLD_BYTES = 4 * 1024 * 1024;
+
+// Writing a file into the mount emits a burst of modify events. Upload once
+// the burst settles instead of shipping each partial state.
+export const UPLOAD_DEBOUNCE_MS = 1500;
+
 interface R2ObjectSnapshot {
   etag: string;
   size: number;
@@ -50,7 +58,12 @@ export class LocalMountSyncManager {
   private readonly echoSuppressTtlMs: number;
 
   private snapshot: Map<string, R2ObjectSnapshot> = new Map();
-  private echoSuppressSet: Set<string> = new Set();
+  private echoSuppressTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
+  private uploadTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  // Container -> R2 operations run one at a time, in event order, so a late
+  // upload cannot land after a delete or a newer upload of the same file.
+  private containerToR2Queue: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchAbortController: AbortController | null = null;
@@ -123,10 +136,17 @@ export class LocalMountSyncManager {
 
     const pollCycle = this.activePollCycle;
     const watchLoop = this.activeWatchLoop;
-    await Promise.allSettled([pollCycle, watchLoop].filter(isPromise));
+    await Promise.allSettled([
+      ...[pollCycle, watchLoop].filter(isPromise),
+      this.containerToR2Queue
+    ]);
+
+    for (const timer of this.echoSuppressTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.echoSuppressTimers.clear();
 
     this.snapshot.clear();
-    this.echoSuppressSet.clear();
 
     this.logger.info('Local mount sync stopped', {
       mountPath: this.mountPath
@@ -150,6 +170,13 @@ export class LocalMountSyncManager {
       this.watchAbortController.abort();
       this.watchAbortController = null;
     }
+
+    // Pending uploads are dropped: without the watch stream nothing tells us
+    // whether those files finished being written.
+    for (const timer of this.uploadTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.uploadTimers.clear();
 
     if (!this.runtimeHoldReleased) {
       this.runtimeHoldReleased = true;
@@ -263,6 +290,9 @@ export class LocalMountSyncManager {
               containerPath,
               generation
             );
+            // Restart the window so the watch events from a long streamed
+            // write are suppressed too.
+            this.suppressEcho(containerPath);
             this.logger.debug('R2 -> Container: synced object', {
               key,
               action
@@ -332,6 +362,21 @@ export class LocalMountSyncManager {
   ): Promise<void> {
     const obj = await this.bucket.get(key);
     if (!obj) return;
+
+    if (obj.size > STREAM_TO_CONTAINER_THRESHOLD_BYTES) {
+      try {
+        await this.runRuntimeCallIfCurrent(
+          generation,
+          'mount.local.writeFileStream',
+          (control) => control.files.writeFileStream(containerPath, obj.body)
+        );
+      } catch (error) {
+        // A call that fails before reading the body leaves the R2 read open.
+        await obj.body.cancel().catch(() => {});
+        throw error;
+      }
+      return;
+    }
 
     const arrayBuffer = await obj.arrayBuffer();
     const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
@@ -455,43 +500,32 @@ export class LocalMountSyncManager {
           const containerPath = event.path;
 
           // Skip echo from our own R2 -> Container writes
-          if (this.echoSuppressSet.has(containerPath)) continue;
+          if (this.echoSuppressTimers.has(containerPath)) continue;
 
           const r2Key = this.containerPathToR2Key(containerPath);
           if (!r2Key) continue;
 
-          try {
-            switch (event.eventType) {
-              case 'create':
-              case 'modify':
-              case 'move_to': {
-                await this.uploadFileToR2(containerPath, r2Key, generation);
-                this.logger.debug('Container -> R2: synced file', {
-                  path: containerPath,
-                  key: r2Key,
-                  action: event.eventType
-                });
-                break;
-              }
+          switch (event.eventType) {
+            case 'create':
+            case 'modify':
+            case 'move_to':
+              this.scheduleUpload(containerPath, r2Key, generation);
+              break;
 
-              case 'delete':
-              case 'move_from': {
-                if (!this.isCurrentGeneration(generation)) break;
+            case 'delete':
+            case 'move_from':
+              // A queued upload would resurrect the object after the delete.
+              this.cancelScheduledUpload(containerPath);
+              this.enqueueContainerToR2(containerPath, generation, async () => {
                 await this.bucket.delete(r2Key);
-                if (!this.isCurrentGeneration(generation)) break;
+                if (!this.isCurrentGeneration(generation)) return;
                 this.snapshot.delete(r2Key);
                 this.logger.debug('Container -> R2: deleted object', {
                   path: containerPath,
                   key: r2Key
                 });
-                break;
-              }
-            }
-          } catch (error) {
-            this.logger.error(
-              `Container -> R2 sync failed for ${containerPath}`,
-              error instanceof Error ? error : new Error(String(error))
-            );
+              });
+              break;
           }
         }
       }
@@ -499,25 +533,91 @@ export class LocalMountSyncManager {
   }
 
   /**
-   * Read a container file and upload it to R2, then update the local
-   * snapshot so the next poll cycle doesn't echo the write back.
+   * Upload a changed file once its burst of watch events settles. Each new
+   * event for the path restarts the wait.
+   */
+  private scheduleUpload(
+    containerPath: string,
+    r2Key: string,
+    generation: number
+  ): void {
+    this.cancelScheduledUpload(containerPath);
+    const timer = setTimeout(() => {
+      this.uploadTimers.delete(containerPath);
+      this.enqueueContainerToR2(containerPath, generation, async () => {
+        await this.uploadFileToR2(containerPath, r2Key, generation);
+        this.logger.debug('Container -> R2: synced file', {
+          path: containerPath,
+          key: r2Key
+        });
+      });
+    }, UPLOAD_DEBOUNCE_MS);
+    this.uploadTimers.set(containerPath, timer);
+  }
+
+  private cancelScheduledUpload(containerPath: string): void {
+    const timer = this.uploadTimers.get(containerPath);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.uploadTimers.delete(containerPath);
+    }
+  }
+
+  private enqueueContainerToR2(
+    containerPath: string,
+    generation: number,
+    operation: () => Promise<void>
+  ): void {
+    this.containerToR2Queue = this.containerToR2Queue.then(async () => {
+      if (!this.isCurrentGeneration(generation)) return;
+      try {
+        await operation();
+      } catch (error) {
+        if (!this.isCurrentGeneration(generation)) return;
+        this.logger.error(
+          `Container -> R2 sync failed for ${containerPath}`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
+    });
+  }
+
+  /**
+   * Stream a container file into R2, then update the local snapshot so the
+   * next poll cycle doesn't echo the write back.
    */
   private async uploadFileToR2(
     containerPath: string,
     r2Key: string,
     generation?: number
   ): Promise<void> {
-    const result = await this.runRuntimeCallIfCurrent(
+    await this.runRuntimeCallIfCurrent(
       generation,
       'mount.local.readFile',
-      (control) =>
-        control.files.readFile(containerPath, {
-          encoding: 'base64'
-        })
+      async (control) => {
+        const file = await control.files.readFile(containerPath, {
+          encoding: 'none'
+        });
+        if (!this.isCurrentOrUnscoped(generation)) {
+          await file.content.cancel();
+          return;
+        }
+
+        // R2 needs a known length to accept a stream.
+        const sized = new FixedLengthStream(file.size);
+        const pipeAbort = new AbortController();
+        file.content
+          .pipeTo(sized.writable, { signal: pipeAbort.signal })
+          .catch(() => {});
+        try {
+          await this.bucket.put(r2Key, sized.readable);
+        } catch (error) {
+          // put() can reject without reading its body; stop reading the file.
+          pipeAbort.abort(error);
+          throw error;
+        }
+      }
     );
-    if (!this.isCurrentOrUnscoped(generation)) return;
-    const bytes = base64ToUint8Array(result.content);
-    await this.bucket.put(r2Key, bytes);
     if (!this.isCurrentOrUnscoped(generation)) return;
 
     const head = await this.bucket.head(r2Key);
@@ -551,10 +651,13 @@ export class LocalMountSyncManager {
   }
 
   private suppressEcho(containerPath: string): void {
-    this.echoSuppressSet.add(containerPath);
-    setTimeout(() => {
-      this.echoSuppressSet.delete(containerPath);
-    }, this.echoSuppressTtlMs);
+    clearTimeout(this.echoSuppressTimers.get(containerPath));
+    this.echoSuppressTimers.set(
+      containerPath,
+      setTimeout(() => {
+        this.echoSuppressTimers.delete(containerPath);
+      }, this.echoSuppressTtlMs)
+    );
   }
 
   private r2KeyToContainerPath(key: string): string {
@@ -586,8 +689,4 @@ function isPromise<T>(value: Promise<T> | null): value is Promise<T> {
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(base64, 'base64'));
 }
