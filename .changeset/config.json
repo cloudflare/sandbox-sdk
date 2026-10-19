@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "cloudflare/sandbox-sdk"
+    }
+  ],
+  "access": "public",
+  "baseBranch": "main",
+  "format": false,
+  "bumpVersionsWithWorkspaceProtocolOnly": true
+}

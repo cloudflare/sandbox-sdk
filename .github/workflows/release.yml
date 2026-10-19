@@ -1,14 +1,15 @@
-# Publishes @cloudflare/sandbox and its shim donor image. See docs/releasing.md.
+# Releases @cloudflare/sandbox and its shim donor image. See docs/releasing.md.
 # npm trusted publishing names this file, so keep the name release.yml.
 name: Release
 
 on:
+  # Each push to main publishes the version in packages/sandbox/package.json when npm doesn't
+  # have it yet. Otherwise, when changesets are pending, it opens or updates the Version Packages
+  # pull request, whose merge publishes the next version.
+  push:
+    branches: [main]
+  # Publishes a prerelease from any branch, or retries a stable release from main.
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version to release. It must equal the version in packages/sandbox/package.json.
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -17,11 +18,79 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  PACKAGE: "@cloudflare/sandbox"
+  IMAGE: docker.io/cloudflare/sandbox
+
 jobs:
-  release:
-    name: Release
-    # A stable version releases only from main. A prerelease can release from any branch.
-    if: github.repository == 'cloudflare/sandbox-sdk' && (github.ref == 'refs/heads/main' || contains(inputs.version, '-'))
+  plan:
+    name: Plan
+    if: github.repository == 'cloudflare/sandbox-sdk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+      dist-tag: ${{ steps.plan.outputs.dist-tag }}
+      version-pr: ${{ steps.plan.outputs.version-pr }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Decide whether to publish
+        id: plan
+        run: |
+          version="$(node -p "require('./packages/sandbox/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # Anything but "not found" stops the run, so a registry error never republishes the image.
+          if npm view "$PACKAGE@$version" version > /dev/null 2> npm-view.log; then
+            echo "$PACKAGE@$version is on npm, so there is nothing to publish"
+            pending="$(node tools/release.ts pending)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "version-pr=$pending" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -q E404 npm-view.log; then
+            cat npm-view.log
+            exit 1
+          fi
+
+          case "$version" in
+            # A prerelease gets its prerelease name as the npm dist-tag: 1.1.0-rc.0 gets rc.
+            *-*)
+              dist_tag="${version#*-}"
+              dist_tag="${dist_tag%%.*}"
+              if [[ ! "$dist_tag" =~ ^[a-z][a-z0-9-]*$ || "$dist_tag" == latest ]]; then
+                echo "::error::$version needs a prerelease name to use as the npm dist-tag, such as rc in 1.1.0-rc.0"
+                exit 1
+              fi
+              ;;
+            *)
+              if [ "$GITHUB_REF" != refs/heads/main ]; then
+                echo "::error::A stable version releases only from main"
+                exit 1
+              fi
+              # Fail before anything publishes when the release would have no notes.
+              node tools/release.ts notes "$version" > /dev/null
+              dist_tag=latest
+              ;;
+          esac
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "dist-tag=$dist_tag" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -30,9 +99,8 @@ jobs:
       # npm trusted publishing and provenance.
       id-token: write
     env:
-      VERSION: ${{ inputs.version }}
-      PACKAGE: "@cloudflare/sandbox"
-      IMAGE: docker.io/cloudflare/sandbox
+      VERSION: ${{ needs.plan.outputs.version }}
+      DIST_TAG: ${{ needs.plan.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@v7
 
@@ -45,40 +113,31 @@ jobs:
       # Trusted publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@11
 
-      - name: Check the version
-        run: |
-          actual="$(node -p "require('./packages/sandbox/package.json').version")"
-          if [ "$actual" != "$VERSION" ]; then
-            echo "::error::packages/sandbox/package.json has version $actual, not $VERSION"
-            exit 1
-          fi
-          if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
-            echo "::error::$PACKAGE@$VERSION is already on npm"
-            exit 1
-          fi
-          # A prerelease gets its prerelease name as the npm dist-tag: 1.0.0-rc.0 gets rc.
-          case "$VERSION" in
-            *-*)
-              dist_tag="${VERSION#*-}"
-              dist_tag="${dist_tag%%.*}"
-              if [[ ! "$dist_tag" =~ ^[a-z][a-z0-9-]*$ || "$dist_tag" == latest ]]; then
-                echo "::error::$VERSION needs a prerelease name to use as the npm dist-tag, such as rc in 1.0.0-rc.0"
-                exit 1
-              fi
-              ;;
-            *) dist_tag=latest ;;
-          esac
-          echo "DIST_TAG=$dist_tag" >> "$GITHUB_ENV"
-
       - run: npm ci --no-audit --no-fund
 
+      # A re-run of a release that npm already has skips to the steps that are still missing.
+      - name: Check npm
+        id: npm
+        run: |
+          if npm view "$PACKAGE@$VERSION" version > /dev/null 2> npm-view.log; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif grep -q E404 npm-view.log; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat npm-view.log
+            exit 1
+          fi
+
       - name: Check
+        if: steps.npm.outputs.published == 'false'
         run: npm run check
 
       - name: Test
+        if: steps.npm.outputs.published == 'false'
         run: npm run test:release
 
       - uses: docker/login-action@v4
+        if: steps.npm.outputs.published == 'false'
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
@@ -86,6 +145,7 @@ jobs:
       # The image goes first, so a published package always has its donor image. The default
       # builder reuses the shim that the checks built and tested, instead of compiling it again.
       - name: Push the donor image
+        if: steps.npm.outputs.published == 'false'
         run: |
           docker buildx build --platform linux/amd64 --target image \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
@@ -94,31 +154,38 @@ jobs:
             --file images/sandbox-tools/Dockerfile .
 
       - name: Publish to npm
+        if: steps.npm.outputs.published == 'false'
         run: npm publish --workspace packages/sandbox --provenance --access public --tag "$DIST_TAG"
 
       - name: Tag the release
         run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$PACKAGE@$VERSION" > /dev/null; then
+            exit 0
+          fi
           git -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             tag --annotate --message "$PACKAGE@$VERSION" "$PACKAGE@$VERSION"
           git push origin "refs/tags/$PACKAGE@$VERSION"
 
-      # Notes list the pull requests merged since the previous release. A stable version becomes
-      # the latest release; a prerelease never does.
+      # A stable release takes its notes from CHANGELOG.md and becomes the latest release. A
+      # prerelease never does, and lists the pull requests merged since the previous release.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$VERSION" == *-* ]]; then
-            kind=(--prerelease --latest=false)
-          else
-            kind=(--latest)
+          if gh release view "$PACKAGE@$VERSION" > /dev/null 2>&1; then
+            exit 0
           fi
-          gh release create "$PACKAGE@$VERSION" --verify-tag --title "$PACKAGE@$VERSION" \
-            --generate-notes "${kind[@]}"
+          if [[ "$VERSION" == *-* ]]; then
+            details=(--prerelease --latest=false --generate-notes)
+          else
+            node tools/release.ts notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+            details=(--latest --notes-file "$RUNNER_TEMP/notes.md")
+          fi
+          gh release create "$PACKAGE@$VERSION" --verify-tag --title "$PACKAGE@$VERSION" "${details[@]}"
 
       - name: Update the Docker Hub description
-        if: ${{ !contains(inputs.version, '-') }}
+        if: ${{ !contains(env.VERSION, '-') }}
         continue-on-error: true
         uses: peter-evans/dockerhub-description@v5
         with:
@@ -127,3 +194,105 @@ jobs:
           repository: cloudflare/sandbox
           short-description: The sandbox-shim helper for @cloudflare/sandbox, to copy into your own image
           readme-filepath: images/sandbox-tools/DOCKER_HUB.md
+
+  # The examples pin a published version, so they move only after a stable release publishes.
+  examples:
+    name: Move the examples
+    needs: [plan, publish]
+    if: ${{ !contains(needs.plan.outputs.version, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BRANCH: release/examples-${{ needs.plan.outputs.version }}
+    steps:
+      # Pushes and pull requests from the app's token trigger the pull request checks.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Starts from the newest main, so the pull request isn't behind when it opens.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      # npm can take a moment to serve a version it has just accepted.
+      - name: Wait for npm
+        run: |
+          for _ in $(seq 30); do
+            npm view "$PACKAGE@$VERSION" version > /dev/null 2>&1 && exit 0
+            sleep 10
+          done
+          echo "::error::npm does not serve $PACKAGE@$VERSION yet"
+          exit 1
+
+      # Safe to re-run: it replaces the branch and reuses an open pull request.
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          node tools/example.ts set-version "$VERSION"
+          if git diff --quiet; then
+            echo "The examples already use $VERSION"
+            exit 0
+          fi
+          bot="${APP_SLUG}[bot]"
+          user_id="$(gh api "/users/$bot" --jq .id)"
+          git -c user.name="$bot" \
+            -c user.email="$user_id+$bot@users.noreply.github.com" \
+            commit --all --message "Move the examples to $VERSION"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BRANCH" --title "Move the examples to $VERSION" \
+              --body "Points every example at \`$PACKAGE@$VERSION\` and its donor image now that both are published. It merges once a code owner approves it and the checks pass."
+          fi
+          gh pr merge "$BRANCH" --auto --squash
+
+  version:
+    name: Version Packages
+    needs: plan
+    if: needs.plan.outputs.version-pr == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pushes and pull requests from the app's token trigger the pull request checks.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # The changelog finds the commit and pull request that added each changeset in the history.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      # Also hands its token to the script, which @changesets/changelog-github uses to look up the
+      # pull request and author of each changeset.
+      - uses: changesets/action/version@v2
+        with:
+          script: node tools/release.ts version
+          github-token: ${{ steps.app-token.outputs.token }}

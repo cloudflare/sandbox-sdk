@@ -10,6 +10,7 @@
   "type": "module",
   "scripts": {
     "build": "vp pack && npm run shim:build",
+    "changeset": "changeset",
     "check": "npm run check:ts && npm run shim:check",
     "check:ts": "vp pack && vp check && npm run knip",
     "example": "node tools/example.ts",
@@ -27,6 +28,9 @@
     "test:s3-native-local": "vp pack && SANDBOX_S3_NATIVE_LOCAL=1 vp test --run packages/sandbox/tests/s3-native-local.integration.test.ts"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3",
+    "@changesets/read": "1.0.1",
     "@cloudflare/workers-types": "5.20261016.1",
     "@types/node": "24.19.2",
     "knip": "6.41.0",
