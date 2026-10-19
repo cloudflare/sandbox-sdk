@@ -92,6 +92,23 @@ describe('forwardPreviewRequest', () => {
     expect(settle).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    'Durable Object reset because its code was updated.',
+    'Internal error while starting up Durable Object storage caused object to be reset.'
+  ])('rethrows a Durable Object reset: %s', async (message) => {
+    const { lifecycle, settle } = createLifecycle();
+    const tcpFetch = vi.fn().mockRejectedValue(new Error(message));
+
+    await expect(
+      forwardPreviewRequest(
+        { fetch: tcpFetch },
+        new Request('http://localhost:8080/'),
+        lifecycle
+      )
+    ).rejects.toThrow(message);
+    expect(settle).toHaveBeenCalledTimes(1);
+  });
+
   it('bridges WebSocket responses and settles once on close', async () => {
     const { lifecycle, settle } = createLifecycle();
     const pair = new WebSocketPair();
