@@ -14,6 +14,10 @@ type PersistedOverrides = Record<string, { method: string; params?: unknown }>;
 export class RestoredMountRoutes {
   r2Buckets: R2EgressParams['buckets'] = {};
   credentialProxyMounts: S3CredentialProxyParams['mounts'] = {};
+  // Set when a route may still carry restored mounts of a container that has
+  // stopped, because removing them failed.
+  staleR2 = false;
+  staleCredentialProxy = false;
 
   /**
    * Read the overrides the base Container restored from storage in its

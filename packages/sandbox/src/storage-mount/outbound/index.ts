@@ -261,45 +261,57 @@ export async function configureS3CredentialProxyOutbound(
 }
 
 /**
- * Drop the routes restored for a previous container's mounts, keeping the
- * routes for the mounts in `mounts`. A route that cannot be updated stays
- * restored so the next stop tries again.
+ * Drop the routes restored for the mounts of a container that has stopped.
  */
 export async function releaseRestoredMountRoutes(
   host: MountOutboundHost,
   mounts: Iterable<[string, MountInfo]>
 ): Promise<void> {
-  const restored = host.restoredMountRoutes;
-  const { r2Buckets, credentialProxyMounts } = restored;
-  if (Object.keys(r2Buckets).length > 0) {
-    restored.r2Buckets = {};
+  const routes = host.restoredMountRoutes;
+  for (const mountId of Object.keys(routes.credentialProxyMounts)) {
+    evictSigV4ClientCacheEntry(mountId);
+    evictDirectoryMarkerCacheForMount(mountId);
+  }
+  if (Object.keys(routes.r2Buckets).length > 0) routes.staleR2 = true;
+  if (Object.keys(routes.credentialProxyMounts).length > 0) {
+    routes.staleCredentialProxy = true;
+  }
+  routes.r2Buckets = {};
+  routes.credentialProxyMounts = {};
+  await removeStaleMountRoutes(host, mounts);
+}
+
+/**
+ * Rewrite the routes that still carry a stopped container's restored mounts
+ * so they cover only `mounts`. A failed update stays marked and is retried on
+ * the next container start or stop.
+ */
+export async function removeStaleMountRoutes(
+  host: MountOutboundHost,
+  mounts: Iterable<[string, MountInfo]>
+): Promise<void> {
+  const routes = host.restoredMountRoutes;
+  if (routes.staleR2) {
     try {
       await configureR2EgressOutbound(host, buildR2EgressParams(mounts));
+      routes.staleR2 = false;
     } catch (error) {
-      restored.r2Buckets = r2Buckets;
-      host.logger.warn('Failed to remove restored R2 mount routes', {
+      host.logger.warn('Failed to remove stale R2 mount routes', {
         error: error instanceof Error ? error.message : String(error)
       });
     }
   }
-  const credentialProxyMountIds = Object.keys(credentialProxyMounts);
-  if (credentialProxyMountIds.length > 0) {
-    restored.credentialProxyMounts = {};
+  if (routes.staleCredentialProxy) {
     try {
       await configureS3CredentialProxyOutbound(
         host,
         buildS3CredentialProxyParams(mounts)
       );
-      for (const mountId of credentialProxyMountIds) {
-        evictSigV4ClientCacheEntry(mountId);
-        evictDirectoryMarkerCacheForMount(mountId);
-      }
+      routes.staleCredentialProxy = false;
     } catch (error) {
-      restored.credentialProxyMounts = credentialProxyMounts;
-      host.logger.warn(
-        'Failed to remove restored credential proxy mount routes',
-        { error: error instanceof Error ? error.message : String(error) }
-      );
+      host.logger.warn('Failed to remove stale credential proxy mount routes', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 }

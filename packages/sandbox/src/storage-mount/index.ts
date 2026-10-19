@@ -17,8 +17,7 @@ export {
   configureR2EgressOutbound,
   configureS3CredentialProxyOutbound,
   type EgressContainerState,
-  type MountOutboundHost,
-  releaseRestoredMountRoutes
+  type MountOutboundHost
 } from './outbound';
 export {
   CONTAINER_PROXY_CLASS_NAME,

@@ -1863,6 +1863,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.logger.debug('Sandbox started', {
       replacementStartTransitionCompleted
     });
+    await this.bucketMounts.removeStaleRoutes();
   }
 
   override async start(
