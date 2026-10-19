@@ -53,10 +53,10 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.23.0",
-    "@types/node": "^24.10.1",
+    "@types/node": "^24.19.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "wrangler": "^4.151.1"
   },
   "overrides": {
