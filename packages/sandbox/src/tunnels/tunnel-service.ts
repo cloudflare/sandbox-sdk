@@ -498,18 +498,21 @@ export class TunnelService implements TunnelsHandler {
         await this.#assertSandboxLifetime(lifetime, 'committing');
         return spawned;
       } catch (error) {
-        if (committedInfo) {
-          await this.#invalidateCommittedPortIfUnchanged(
-            port,
-            committedInfo,
-            lease.runtime,
+        try {
+          if (committedInfo) {
+            await this.#invalidateCommittedPortIfUnchanged(
+              port,
+              committedInfo,
+              lease.runtime,
+              runId
+            );
+          }
+        } finally {
+          await this.#stopAbandonedQuickRun(lease.tunnels, port, {
+            tunnelId,
             runId
-          );
+          });
         }
-        await this.#stopAbandonedQuickRun(lease.tunnels, port, {
-          tunnelId,
-          runId
-        });
         throw error;
       } finally {
         hold.release();

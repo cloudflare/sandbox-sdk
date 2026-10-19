@@ -691,6 +691,38 @@ describe('tunnel service > get', () => {
     });
   });
 
+  it('stops the started run even when invalidating its record fails', async () => {
+    const storage = makeStorage();
+    const transaction = storage.transaction as StorageTransactionMock;
+    const commit = transaction.getMockImplementation();
+    if (!commit) throw new Error('expected a storage transaction mock');
+    transaction
+      .mockImplementationOnce(commit)
+      .mockRejectedValueOnce(new Error('storage unavailable'));
+    // The lifetime check fails only after the record is committed.
+    const assertCurrent = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new SandboxLifetimeChangedError());
+    const { client, handler } = makeHandler({
+      ...makeFences({ currentLifetime: { assertCurrent } }),
+      storage
+    });
+    mockEnsureQuick(client.tunnels, (tunnelId, port) =>
+      makeRecord({ id: tunnelId, port })
+    );
+
+    await expect(handler.get(8080)).rejects.toThrow();
+
+    expect(transaction).toHaveBeenCalledTimes(2);
+    const [started] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: started.tunnelId,
+      runId: started.runId
+    });
+  });
+
   it('clears the inflight slot when the spawn fails', async () => {
     const { client, handler } = makeHandler();
     client.tunnels.ensureTunnelRun.mockRejectedValueOnce(new Error('boom'));

@@ -51,9 +51,8 @@ function createQuickTunnelId(): string {
 
 /**
  * The run holding `request.port` when the container rejected `request`
- * with a port conflict. Containers older than this SDK omit
- * `activeTunnelId`, which `stopTunnelRun` needs, so their conflicts yield
- * `null`.
+ * with a port conflict, or `null` when the conflict does not name both
+ * the active run and its tunnel, which `stopTunnelRun` needs.
  */
 function conflictingRunOnPort(
   error: unknown,
