@@ -27,13 +27,13 @@
     "test:s3-native-local": "vp pack && SANDBOX_S3_NATIVE_LOCAL=1 vp test --run packages/sandbox/tests/s3-native-local.integration.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261008.1",
+    "@cloudflare/workers-types": "5.20261016.1",
     "@types/node": "24.13.3",
-    "knip": "6.34.0",
+    "knip": "6.41.0",
     "typescript": "6.0.3",
     "vite-plus": "0.3.3",
-    "wrangler": "4.148.0",
-    "zod": "4.6.5"
+    "wrangler": "4.151.1",
+    "zod": "4.6.7"
   },
   "overrides": {
     "wrangler": "$wrangler"
