@@ -578,7 +578,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `git init ${TEST_DIR}`,
             `mkdir -p ${TEST_DIR}/alpha/beta/gamma ${TEST_DIR}/nested/alpha/beta/gamma ${TEST_DIR}/logs/app`,
             `printf '*.log\n' > ${TEST_DIR}/.gitignore`,
@@ -587,7 +587,7 @@ describe('Backup Workflow E2E', () => {
             `echo "keep" > ${TEST_DIR}/nested/alpha/beta/gamma/file.txt`,
             `echo "keep" > ${TEST_DIR}/logs/app/keep.txt`,
             `echo "ignored" > ${TEST_DIR}/logs/app/debug.log`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -608,7 +608,10 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          command: shellCommand([
+            `rm -rf ${TEST_DIR}`,
+            `mkdir -p ${TEST_DIR}`
+          ])
         })
       });
 
@@ -623,13 +626,16 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
-            `test -f ${TEST_DIR}/alpha/keep.txt && echo alpha-keep:yes || echo alpha-keep:no`,
-            `test -e ${TEST_DIR}/alpha/beta/gamma && echo gamma:no || echo gamma:yes`,
-            `test -f ${TEST_DIR}/nested/alpha/beta/gamma/file.txt && echo nested-keep:yes || echo nested-keep:no`,
-            `test -f ${TEST_DIR}/logs/app/keep.txt && echo logs-keep:yes || echo logs-keep:no`,
-            `test -e ${TEST_DIR}/logs/app/debug.log && echo log:no || echo log:yes`
-          ].join('; ')
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/alpha/keep.txt && echo alpha-keep:yes || echo alpha-keep:no`,
+              `test -e ${TEST_DIR}/alpha/beta/gamma && echo gamma:no || echo gamma:yes`,
+              `test -f ${TEST_DIR}/nested/alpha/beta/gamma/file.txt && echo nested-keep:yes || echo nested-keep:no`,
+              `test -f ${TEST_DIR}/logs/app/keep.txt && echo logs-keep:yes || echo logs-keep:no`,
+              `test -e ${TEST_DIR}/logs/app/debug.log && echo log:no || echo log:yes`
+            ],
+            '; '
+          )
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
