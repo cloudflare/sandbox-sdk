@@ -277,6 +277,11 @@ const CONTAINER_PROXY_CLASS_NAME = 'ContainerProxy';
 const S3_CREDENTIAL_PROXY_HOST = 's3-credential-proxy.internal';
 const S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST = 's3-credential-proxy.sandbox.test';
 
+const SDK_OUTBOUND_HANDLERS = {
+  r2EgressMount: r2EgressHandler,
+  s3CredentialProxyMount: s3CredentialProxyHandler
+};
+
 class ContainerProxyOutboundTarget extends Container {}
 
 Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
@@ -285,10 +290,47 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
 
 (
   ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
-).outboundHandlers = {
-  r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
+).outboundHandlers = SDK_OUTBOUND_HANDLERS;
+
+type RestoredMountRoutes = {
+  r2Buckets: R2EgressParams['buckets'];
+  credentialProxyMounts: S3CredentialProxyParams['mounts'];
 };
+
+function noRestoredMountRoutes(): RestoredMountRoutes {
+  return { r2Buckets: {}, credentialProxyMounts: {} };
+}
+
+/**
+ * Read the bucket mount routes that the base Container restored from storage
+ * in its constructor. `outboundByHostOverrides` is private in its types.
+ */
+function readRestoredMountRoutes(container: unknown): RestoredMountRoutes {
+  const overrides =
+    (
+      container as {
+        outboundByHostOverrides?: Record<
+          string,
+          { method: string; params?: unknown }
+        >;
+      }
+    ).outboundByHostOverrides ?? {};
+  const r2 = overrides['r2.internal'];
+  const credentialProxy = overrides[S3_CREDENTIAL_PROXY_HOST];
+  return {
+    r2Buckets:
+      r2?.method === 'r2EgressMount'
+        ? { ...(r2.params as R2EgressParams | undefined)?.buckets }
+        : {},
+    credentialProxyMounts:
+      credentialProxy?.method === 's3CredentialProxyMount'
+        ? {
+            ...(credentialProxy.params as S3CredentialProxyParams | undefined)
+              ?.mounts
+          }
+        : {}
+  };
+}
 
 /**
  * SDK-level ContainerProxy that directly dispatches SDK-internal mount hosts
@@ -1053,6 +1095,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  // Bucket mount routes restored from a previous instance of this Durable
+  // Object. activeMounts starts empty after a restart, but s3fs mounts in a
+  // container that kept running still send requests, so every route update
+  // keeps these routes until onStop() reports that container stopped. The
+  // base class reports a stop it missed before it starts a new container.
+  private restoredMountRoutes: RestoredMountRoutes = noRestoredMountRoutes();
+  // Routes that may still carry restored mounts of a container that has
+  // stopped, because removing them failed.
+  private staleMountRoutes = { r2: false, credentialProxy: false };
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
@@ -1279,7 +1330,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
+    // The base constructor restores persisted outbound overrides and drops any
+    // whose method is not registered for the concrete class. Register the SDK
+    // mount handlers first so bucket mounts keep their egress route when the
+    // Durable Object restarts under a running container. Registered handlers
+    // also make the base class apply and persist outbound interception, which
+    // needs the ContainerProxy export that bucket mounts already require.
+    if ((ctx as EgressContainerState).exports?.ContainerProxy) {
+      const registry = new.target as unknown as OutboundHandlerRegistry;
+      registry.outboundHandlers = {
+        ...registry.outboundHandlers,
+        ...SDK_OUTBOUND_HANDLERS
+      };
+    }
     super(ctx, env);
+    this.restoredMountRoutes = readRestoredMountRoutes(this);
 
     const envObj = env as Record<string, unknown>;
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
@@ -2015,6 +2080,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       validateBucketBindingName(bucket, mountPath);
       this.validateMountPath(mountPath);
       this.validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
+
+      // A mount from before a Durable Object restart is not in activeMounts,
+      // but its s3fs process still uses the binding's route.
+      const restoredRoute = this.restoredMountRoutes.r2Buckets[bucket];
+      if (
+        restoredRoute &&
+        (restoredRoute.prefix !== prefix ||
+          (restoredRoute.readOnly ?? false) !== (options.readOnly ?? false))
+      ) {
+        throw new InvalidMountConfigError(
+          `R2 binding "${bucket}" is already mounted with a different prefix or readOnly setting. ` +
+            'Mount the same binding only once, or use the same settings for additional mounts.'
+        );
+      }
 
       for (const [existingMountPath, mountInfo] of this.activeMounts) {
         if (
@@ -2959,6 +3038,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     await this.currentRuntime.markStarted();
 
+    await this.removeStaleMountRoutes();
+
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
       this.logger.error(
@@ -3138,6 +3219,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         params
       )
     );
+
+    await this.releaseRestoredMountRoutes();
 
     // Stop local sync managers before clearing the map.
     let hadR2EgressMount = false;
@@ -7798,9 +7881,67 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  /**
+   * Drop the routes restored for the mounts of a container that has stopped.
+   */
+  private async releaseRestoredMountRoutes(): Promise<void> {
+    const { r2Buckets, credentialProxyMounts } = this.restoredMountRoutes;
+    this.restoredMountRoutes = noRestoredMountRoutes();
+    for (const mountId of Object.keys(credentialProxyMounts)) {
+      evictSigV4ClientCacheEntry(mountId);
+      evictDirectoryMarkerCacheForMount(mountId);
+    }
+    if (Object.keys(r2Buckets).length > 0) {
+      this.staleMountRoutes.r2 = true;
+    }
+    if (Object.keys(credentialProxyMounts).length > 0) {
+      this.staleMountRoutes.credentialProxy = true;
+    }
+    await this.removeStaleMountRoutes();
+  }
+
+  /**
+   * Rewrite the routes that still carry a stopped container's restored
+   * mounts so they cover only the mounts in activeMounts. A failed update
+   * stays marked and is retried on the next container start or stop.
+   */
+  private async removeStaleMountRoutes(): Promise<void> {
+    if (this.staleMountRoutes.r2) {
+      try {
+        await this.configureR2EgressOutbound(this.getR2EgressParams());
+        this.staleMountRoutes.r2 = false;
+      } catch (error) {
+        this.logger.warn('Failed to remove stale R2 mount routes', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    if (this.staleMountRoutes.credentialProxy) {
+      try {
+        await this.configureS3CredentialProxyOutbound(
+          this.getS3CredentialProxyParams()
+        );
+        this.staleMountRoutes.credentialProxy = false;
+      } catch (error) {
+        this.logger.warn(
+          'Failed to remove stale credential proxy mount routes',
+          {
+            error: error instanceof Error ? error.message : String(error)
+          }
+        );
+      }
+    }
+  }
+
   private async configureR2EgressOutbound(
-    params: R2EgressParams
+    activeParams: R2EgressParams
   ): Promise<void> {
+    const params: R2EgressParams = {
+      buckets: {
+        ...this.restoredMountRoutes.r2Buckets,
+        ...activeParams.buckets
+      }
+    };
     const ctx = this.ctx as EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
       throw new InvalidMountConfigError(
@@ -7813,13 +7954,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Register r2EgressMount on the concrete subclass's local registry so
-    // setOutboundByHost's validateOutboundHandlerMethodName check passes. The
-    // actual dispatch is handled by the SDK ContainerProxy.fetch() override,
-    // which directly calls r2EgressHandler by hostname without going through
-    // the registry (which is NOT shared across execution contexts).
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { r2EgressMount: r2EgressHandler };
+    // The constructor registered r2EgressMount for setOutboundByHost's
+    // validation. Dispatch happens in the SDK ContainerProxy.fetch() override,
+    // which calls r2EgressHandler by hostname without the registry (which is
+    // not shared across execution contexts).
     if (Object.keys(params.buckets).length > 0) {
       await this.setOutboundByHost<R2EgressParams>(
         'r2.internal',
@@ -7859,8 +7997,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private async configureS3CredentialProxyOutbound(
-    params: S3CredentialProxyParams
+    activeParams: S3CredentialProxyParams
   ): Promise<void> {
+    const params: S3CredentialProxyParams = {
+      mounts: {
+        ...this.restoredMountRoutes.credentialProxyMounts,
+        ...activeParams.mounts
+      }
+    };
     const ctx = this.ctx as EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
       throw new InvalidMountConfigError(
@@ -7878,11 +8022,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST
     ];
 
-    // Register s3CredentialProxyMount on the concrete subclass's local registry
-    // so setOutboundByHost's validateOutboundHandlerMethodName check passes.
-    // Actual dispatch is handled by the SDK ContainerProxy.fetch() override.
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { s3CredentialProxyMount: s3CredentialProxyHandler };
+    // The constructor registered s3CredentialProxyMount for setOutboundByHost's
+    // validation. Dispatch happens in the SDK ContainerProxy.fetch() override.
     if (Object.keys(params.mounts).length > 0) {
       for (const host of hosts) {
         await this.setOutboundByHost<S3CredentialProxyParams>(
