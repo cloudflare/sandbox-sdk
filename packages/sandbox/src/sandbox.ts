@@ -1101,6 +1101,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // keeps these routes until onStop() reports that container stopped. The
   // base class reports a stop it missed before it starts a new container.
   private restoredMountRoutes: RestoredMountRoutes = noRestoredMountRoutes();
+  // Routes that may still carry restored mounts of a container that has
+  // stopped, because removing them failed.
+  private staleMountRoutes = { r2: false, credentialProxy: false };
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
@@ -3034,6 +3037,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Sandbox started');
 
     await this.currentRuntime.markStarted();
+
+    await this.removeStaleMountRoutes();
 
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
@@ -7877,38 +7882,49 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Drop the routes restored for a previous container's mounts, keeping the
-   * routes for mounts made by this instance. A route that cannot be updated
-   * stays restored so the next stop tries again.
+   * Drop the routes restored for the mounts of a container that has stopped.
    */
   private async releaseRestoredMountRoutes(): Promise<void> {
     const { r2Buckets, credentialProxyMounts } = this.restoredMountRoutes;
+    this.restoredMountRoutes = noRestoredMountRoutes();
+    for (const mountId of Object.keys(credentialProxyMounts)) {
+      evictSigV4ClientCacheEntry(mountId);
+      evictDirectoryMarkerCacheForMount(mountId);
+    }
     if (Object.keys(r2Buckets).length > 0) {
-      this.restoredMountRoutes.r2Buckets = {};
+      this.staleMountRoutes.r2 = true;
+    }
+    if (Object.keys(credentialProxyMounts).length > 0) {
+      this.staleMountRoutes.credentialProxy = true;
+    }
+    await this.removeStaleMountRoutes();
+  }
+
+  /**
+   * Rewrite the routes that still carry a stopped container's restored
+   * mounts so they cover only the mounts in activeMounts. A failed update
+   * stays marked and is retried on the next container start or stop.
+   */
+  private async removeStaleMountRoutes(): Promise<void> {
+    if (this.staleMountRoutes.r2) {
       try {
         await this.configureR2EgressOutbound(this.getR2EgressParams());
+        this.staleMountRoutes.r2 = false;
       } catch (error) {
-        this.restoredMountRoutes.r2Buckets = r2Buckets;
-        this.logger.warn('Failed to remove restored R2 mount routes', {
+        this.logger.warn('Failed to remove stale R2 mount routes', {
           error: error instanceof Error ? error.message : String(error)
         });
       }
     }
-    const credentialProxyMountIds = Object.keys(credentialProxyMounts);
-    if (credentialProxyMountIds.length > 0) {
-      this.restoredMountRoutes.credentialProxyMounts = {};
+    if (this.staleMountRoutes.credentialProxy) {
       try {
         await this.configureS3CredentialProxyOutbound(
           this.getS3CredentialProxyParams()
         );
-        for (const mountId of credentialProxyMountIds) {
-          evictSigV4ClientCacheEntry(mountId);
-          evictDirectoryMarkerCacheForMount(mountId);
-        }
+        this.staleMountRoutes.credentialProxy = false;
       } catch (error) {
-        this.restoredMountRoutes.credentialProxyMounts = credentialProxyMounts;
         this.logger.warn(
-          'Failed to remove restored credential proxy mount routes',
+          'Failed to remove stale credential proxy mount routes',
           {
             error: error instanceof Error ? error.message : String(error)
           }

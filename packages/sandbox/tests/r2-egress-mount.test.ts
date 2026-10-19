@@ -965,7 +965,7 @@ describe('Sandbox R2 egress mounts', () => {
     it('keeps routes for mounts made before the restart when another bucket is mounted', async () => {
       const { mockCtx, sandbox } = createRestartedSandbox();
 
-      await sandbox.mountBucket('SECOND', '/mnt/second', {} as any);
+      await sandbox.mountBucket('SECOND', '/mnt/second', {});
 
       expect(mockCtx.exports.ContainerProxy).toHaveBeenLastCalledWith({
         props: expect.objectContaining({
@@ -988,12 +988,12 @@ describe('Sandbox R2 egress mounts', () => {
       const { mockCtx, sandbox } = createRestartedSandbox();
 
       await expect(
-        sandbox.mountBucket('FIRST', '/mnt/other', { prefix: '/b' } as any)
+        sandbox.mountBucket('FIRST', '/mnt/other', { prefix: '/b' })
       ).rejects.toThrow('already mounted with a different prefix');
       expect(mockCtx.exports.ContainerProxy).not.toHaveBeenCalled();
     });
 
-    it('keeps a restored route whose removal failed for the next stop', async () => {
+    it('retries a failed route cleanup when the next container starts', async () => {
       const { sandbox } = createRestartedSandbox();
       const removeOutboundByHost = vi
         .spyOn(
@@ -1003,11 +1003,13 @@ describe('Sandbox R2 egress mounts', () => {
           'removeOutboundByHost'
         )
         .mockRejectedValueOnce(new Error('storage unavailable'));
-      const onStop = () =>
-        (sandbox as unknown as { onStop: () => Promise<void> }).onStop();
+      const lifecycle = sandbox as unknown as {
+        onStop: () => Promise<void>;
+        onStart: () => Promise<void>;
+      };
 
-      await onStop();
-      await onStop();
+      await lifecycle.onStop();
+      await lifecycle.onStart();
 
       const r2Removals = removeOutboundByHost.mock.calls.filter(
         ([host]) => host === 'r2.internal'
