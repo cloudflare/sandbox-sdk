@@ -364,11 +364,17 @@ export class LocalMountSyncManager {
     if (!obj) return;
 
     if (obj.size > STREAM_TO_CONTAINER_THRESHOLD_BYTES) {
-      await this.runRuntimeCallIfCurrent(
-        generation,
-        'mount.local.writeFileStream',
-        (control) => control.files.writeFileStream(containerPath, obj.body)
-      );
+      try {
+        await this.runRuntimeCallIfCurrent(
+          generation,
+          'mount.local.writeFileStream',
+          (control) => control.files.writeFileStream(containerPath, obj.body)
+        );
+      } catch (error) {
+        // A call that fails before reading the body leaves the R2 read open.
+        await obj.body.cancel().catch(() => {});
+        throw error;
+      }
       return;
     }
 

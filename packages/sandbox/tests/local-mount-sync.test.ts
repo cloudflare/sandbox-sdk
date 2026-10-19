@@ -1371,6 +1371,37 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
+    it('should release the R2 body when the mount stops during a large download', async () => {
+      const { bucket, manager } = setup(
+        new Map([
+          [
+            'large.bin',
+            { body: 'x'.repeat(4 * 1024 * 1024 + 1), etag: 'etag-large' }
+          ]
+        ])
+      );
+      const cancel = vi.fn();
+      const getRelease = deferred();
+      bucket.get.mockImplementationOnce(async () => {
+        await getRelease.promise;
+        return {
+          key: 'large.bin',
+          etag: 'etag-large',
+          size: 4 * 1024 * 1024 + 1,
+          body: new ReadableStream({ cancel })
+        };
+      });
+
+      const started = manager.start().catch(() => {});
+      await vi.waitFor(() => expect(bucket.get).toHaveBeenCalled());
+      manager.interrupt();
+      getRelease.resolve();
+      await started;
+
+      expect(cancel).toHaveBeenCalled();
+      await manager.stop();
+    });
+
     it('should upload a file once after a burst of modify events settles', async () => {
       const { bucket, fileClient, manager, emitFileEvent } = setup();
       await manager.start();
