@@ -240,6 +240,38 @@ describe('Editor', () => {
     );
   });
 
+  it.each([
+    ['create_file', 'createFile'],
+    ['update_file', 'updateFile']
+  ] as const)(
+    'logs %s patch failures without patch text',
+    async (type, method) => {
+      applyDiffMock.mockImplementationOnce(() => {
+        throw new Error('Invalid Add File Line: API_KEY=tok-secret');
+      });
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        readFile: vi.fn().mockResolvedValue({ content: 'original content' })
+      };
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
+      const operation = { type, path: '.env', diff: '+API_KEY=tok-secret' };
+
+      await expect(editor[method](operation as never)).rejects.toThrow(
+        'tok-secret'
+      );
+
+      expect(editor.results[0].error).toContain('tok-secret');
+      expect(loggerSpies.error).toHaveBeenCalledWith(
+        expect.stringMatching(/^Failed to (create|update) file$/),
+        undefined,
+        { path: '.env' }
+      );
+      expect(JSON.stringify(loggerSpies.error.mock.calls)).not.toContain(
+        'tok-secret'
+      );
+    }
+  );
+
   describe('Path traversal security', () => {
     it('should reject path traversal attempts with ../', async () => {
       const mockSandbox: MockSandbox = {
