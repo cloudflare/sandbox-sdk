@@ -1114,6 +1114,37 @@ describe('Sandbox R2 egress mounts', () => {
       });
     });
 
+    it('rejects mounting a restored binding with a different prefix', async () => {
+      const { mockCtx, sandbox } = createRestartedSandbox();
+
+      await expect(
+        sandbox.mountBucket('FIRST', '/mnt/other', { prefix: '/b' } as any)
+      ).rejects.toThrow('already mounted with a different prefix');
+      expect(mockCtx.exports.ContainerProxy).not.toHaveBeenCalled();
+    });
+
+    it('keeps a restored route whose removal failed for the next stop', async () => {
+      const { sandbox } = createRestartedSandbox();
+      const removeOutboundByHost = vi
+        .spyOn(
+          sandbox as unknown as {
+            removeOutboundByHost: (h: string) => Promise<void>;
+          },
+          'removeOutboundByHost'
+        )
+        .mockRejectedValueOnce(new Error('storage unavailable'));
+      const onStop = () =>
+        (sandbox as unknown as { onStop: () => Promise<void> }).onStop();
+
+      await onStop();
+      await onStop();
+
+      const r2Removals = removeOutboundByHost.mock.calls.filter(
+        ([host]) => host === 'r2.internal'
+      );
+      expect(r2Removals).toHaveLength(2);
+    });
+
     it('removes routes for mounts made before the restart when the container stops', async () => {
       const { sandbox } = createRestartedSandbox();
       const removeOutboundByHost = vi.spyOn(

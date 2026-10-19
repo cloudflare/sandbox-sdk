@@ -29,7 +29,7 @@ export interface R2EgressMountContext extends BucketMountOperationContext {
 }
 
 export function validateR2EgressMount(
-  context: Pick<R2EgressMountContext, 'registry'>,
+  context: Pick<R2EgressMountContext, 'registry' | 'getOutboundHost'>,
   bucket: string,
   mountPath: string,
   options: R2BindingMountBucketOptions
@@ -38,6 +38,21 @@ export function validateR2EgressMount(
   validateBucketBindingName(bucket, mountPath);
   validateMountPath(context.registry.activeMounts, mountPath);
   validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
+
+  // A mount from before a Durable Object restart is not in the registry, but
+  // its s3fs process still uses the binding's route.
+  const restoredRoute =
+    context.getOutboundHost().restoredMountRoutes.r2Buckets[bucket];
+  if (
+    restoredRoute &&
+    (restoredRoute.prefix !== prefix ||
+      (restoredRoute.readOnly ?? false) !== (options.readOnly ?? false))
+  ) {
+    throw new InvalidMountConfigError(
+      `R2 binding "${bucket}" is already mounted with a different prefix or readOnly setting. ` +
+        'Mount the same binding only once, or use the same settings for additional mounts.'
+    );
+  }
 
   for (const [existingMountPath, existingMount] of context.registry) {
     if (

@@ -262,27 +262,44 @@ export async function configureS3CredentialProxyOutbound(
 
 /**
  * Drop the routes restored for a previous container's mounts, keeping the
- * routes for the mounts in `mounts`.
+ * routes for the mounts in `mounts`. A route that cannot be updated stays
+ * restored so the next stop tries again.
  */
 export async function releaseRestoredMountRoutes(
   host: MountOutboundHost,
   mounts: Iterable<[string, MountInfo]>
 ): Promise<void> {
-  const { r2Buckets, credentialProxyMounts } = host.restoredMountRoutes.take();
+  const restored = host.restoredMountRoutes;
+  const { r2Buckets, credentialProxyMounts } = restored;
   if (Object.keys(r2Buckets).length > 0) {
-    await configureR2EgressOutbound(host, buildR2EgressParams(mounts)).catch(
-      () => {}
-    );
+    restored.r2Buckets = {};
+    try {
+      await configureR2EgressOutbound(host, buildR2EgressParams(mounts));
+    } catch (error) {
+      restored.r2Buckets = r2Buckets;
+      host.logger.warn('Failed to remove restored R2 mount routes', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
   const credentialProxyMountIds = Object.keys(credentialProxyMounts);
   if (credentialProxyMountIds.length > 0) {
-    for (const mountId of credentialProxyMountIds) {
-      evictSigV4ClientCacheEntry(mountId);
-      evictDirectoryMarkerCacheForMount(mountId);
+    restored.credentialProxyMounts = {};
+    try {
+      await configureS3CredentialProxyOutbound(
+        host,
+        buildS3CredentialProxyParams(mounts)
+      );
+      for (const mountId of credentialProxyMountIds) {
+        evictSigV4ClientCacheEntry(mountId);
+        evictDirectoryMarkerCacheForMount(mountId);
+      }
+    } catch (error) {
+      restored.credentialProxyMounts = credentialProxyMounts;
+      host.logger.warn(
+        'Failed to remove restored credential proxy mount routes',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
     }
-    await configureS3CredentialProxyOutbound(
-      host,
-      buildS3CredentialProxyParams(mounts)
-    ).catch(() => {});
   }
 }

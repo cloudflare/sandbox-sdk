@@ -1863,8 +1863,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.logger.debug('Sandbox started', {
       replacementStartTransitionCompleted
     });
-    // A new container has none of the previous container's s3fs mounts.
-    await this.bucketMounts.releaseRestoredRoutes();
   }
 
   override async start(

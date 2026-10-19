@@ -29,7 +29,7 @@ import {
   validateRemoteFuseMount
 } from './operations/remote-fuse-mount';
 import { unmountBucketOperation } from './operations/unmount';
-import { type MountOutboundHost, releaseRestoredMountRoutes } from './outbound';
+import type { MountOutboundHost } from './outbound';
 import { MountRegistry } from './registry';
 import {
   callWithMountControl,
@@ -161,7 +161,10 @@ export class BucketMountService {
     options: R2BindingMountBucketOptions
   ): Promise<void> {
     validateR2EgressMount(
-      { registry: this.registry },
+      {
+        registry: this.registry,
+        getOutboundHost: () => this.deps.getOutboundHost()
+      },
       bucket,
       mountPath,
       options
@@ -312,18 +315,6 @@ export class BucketMountService {
       getOutboundHost: () => this.deps.getOutboundHost(),
       runMountOperation: (operation) => operation()
     });
-  }
-
-  /**
-   * Drop the routes restored for a previous container's mounts. Runs outside
-   * the mount operation queue because a queued mount can be what started the
-   * container.
-   */
-  async releaseRestoredRoutes(): Promise<void> {
-    await releaseRestoredMountRoutes(
-      this.deps.getOutboundHost(),
-      this.registry
-    );
   }
 
   async cleanupForStop(): Promise<void> {

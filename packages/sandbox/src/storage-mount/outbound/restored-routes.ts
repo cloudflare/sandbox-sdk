@@ -8,7 +8,8 @@ type PersistedOverrides = Record<string, { method: string; params?: unknown }>;
  * Bucket mount routes restored from a previous instance of this Durable
  * Object. The mount registry starts empty after a restart, but s3fs mounts in
  * a container that kept running still send requests, so every route update
- * keeps these routes until that container stops.
+ * keeps these routes until onStop() reports that container stopped. The base
+ * class reports a stop it missed before it starts a new container.
  */
 export class RestoredMountRoutes {
   r2Buckets: R2EgressParams['buckets'] = {};
@@ -37,16 +38,5 @@ export class RestoredMountRoutes {
       };
     }
     return routes;
-  }
-
-  /** Forget the restored routes and return what was forgotten. */
-  take(): Pick<RestoredMountRoutes, 'r2Buckets' | 'credentialProxyMounts'> {
-    const taken = {
-      r2Buckets: this.r2Buckets,
-      credentialProxyMounts: this.credentialProxyMounts
-    };
-    this.r2Buckets = {};
-    this.credentialProxyMounts = {};
-    return taken;
   }
 }
