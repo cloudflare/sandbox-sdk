@@ -1,6 +1,11 @@
 import type { Config } from '@opencode-ai/sdk/v2';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
-import { createLogger, type Logger, type Process } from '@repo/shared';
+import {
+  createLogger,
+  type Logger,
+  type Process,
+  type WaitForPortOptions
+} from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 import { OpencodeStartupError } from './types';
@@ -16,6 +21,19 @@ const OPENCODE_SERVE = (port: number) =>
   `opencode serve --port ${port} --hostname 0.0.0.0`;
 
 /**
+ * `GET /path` returns 200 once OpenCode has bootstrapped its project. When
+ * `OPENCODE_SERVER_PASSWORD` is set, OpenCode answers this unauthenticated
+ * probe with 401 instead, which still means the server is up. The range also
+ * admits 3xx and 400, which `/path` does not return.
+ */
+const OPENCODE_READY_CHECK: WaitForPortOptions = {
+  mode: 'http',
+  path: '/path',
+  status: { min: 200, max: 401 },
+  timeout: OPENCODE_STARTUP_TIMEOUT_MS
+};
+
+/**
  * Build the full command, optionally with a directory prefix.
  * If directory is provided, we cd to it first so OpenCode uses it as cwd.
  */
@@ -28,6 +46,7 @@ type OpencodeClientFactory = (options: {
   baseUrl: string;
   fetch: typeof fetch;
   directory?: string;
+  headers?: Record<string, string>;
 }) => OpencodeClient;
 
 // Dynamic import to handle peer dependency
@@ -94,12 +113,7 @@ async function ensureOpencodeServer(
         processId: existingProcess.id
       });
       try {
-        await existingProcess.waitForPort(port, {
-          mode: 'http',
-          path: '/path',
-          status: 200,
-          timeout: OPENCODE_STARTUP_TIMEOUT_MS
-        });
+        await existingProcess.waitForPort(port, OPENCODE_READY_CHECK);
       } catch (e) {
         const logs = await existingProcess.getLogs();
         throw new OpencodeStartupError(
@@ -140,12 +154,7 @@ async function ensureOpencodeServer(
       // Wait for the concurrent server to be ready
       if (retryProcess.status === 'starting') {
         try {
-          await retryProcess.waitForPort(port, {
-            mode: 'http',
-            path: '/path',
-            status: 200,
-            timeout: OPENCODE_STARTUP_TIMEOUT_MS
-          });
+          await retryProcess.waitForPort(port, OPENCODE_READY_CHECK);
         } catch (e) {
           const logs = await retryProcess.getLogs();
           throw new OpencodeStartupError(
@@ -240,12 +249,7 @@ async function startOpencodeServer(
 
   // Wait for server to be ready - check the actual health endpoint
   try {
-    await process.waitForPort(port, {
-      mode: 'http',
-      path: '/path',
-      status: 200,
-      timeout: OPENCODE_STARTUP_TIMEOUT_MS
-    });
+    await process.waitForPort(port, OPENCODE_READY_CHECK);
     getLogger().info('OpenCode server started successfully', {
       port,
       processId: process.id
@@ -400,11 +404,26 @@ export async function createOpencode<TClient = OpencodeClient>(
 
   const client = clientFactory({
     baseUrl: server.url,
+    headers: authorizationHeaders(options?.env),
     fetch: (input, init?) =>
       sandbox.containerFetch(new Request(input, init), server.port)
   });
 
   return { client: client as TClient, server };
+}
+
+/**
+ * Basic auth for an OpenCode server started with `OPENCODE_SERVER_PASSWORD`
+ * in `env`. OpenCode's default username is `opencode`.
+ */
+function authorizationHeaders(
+  env: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  const password = env?.OPENCODE_SERVER_PASSWORD;
+  if (!password) return undefined;
+  const username = env.OPENCODE_SERVER_USERNAME || 'opencode';
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  return { Authorization: `Basic ${btoa(String.fromCharCode(...bytes))}` };
 }
 
 /**
