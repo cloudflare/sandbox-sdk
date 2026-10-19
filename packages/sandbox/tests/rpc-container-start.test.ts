@@ -272,3 +272,53 @@ describe('RPC transport: connecting to a running container', () => {
     expect(startAndWaitForPorts).not.toHaveBeenCalled();
   });
 });
+
+describe('RPC transport: stop reported while connecting', () => {
+  beforeEach(() => {
+    upgradeError = new Error(NO_INSTANCE_MESSAGE);
+    containerStatus = 'stopped';
+    startAndWaitForPorts.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('leaves the connection attempt alone when the platform refused the start', async () => {
+    // A refused start leaves the base class's state at running, so its next
+    // alarm calls onStop() while the first call's connection is still
+    // retrying the start. Tearing that connection down fails the call even
+    // when a container comes up moments later.
+    let refuseStart!: () => void;
+    startAndWaitForPorts.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuseStart = () => reject(upgradeError);
+        })
+    );
+    const sandbox = await makeRpcSandbox();
+    const firstCall = sandbox.exec('echo hi').catch((e: unknown) => e);
+    await vi.waitFor(() => expect(startAndWaitForPorts).toHaveBeenCalled());
+    const disconnect = vi.spyOn(sandbox.client, 'disconnect');
+
+    await (
+      sandbox as unknown as { onStop: (p: object) => Promise<void> }
+    ).onStop({ exitCode: 0, reason: 'exit' });
+
+    expect(disconnect).not.toHaveBeenCalled();
+    refuseStart();
+    await firstCall;
+  });
+
+  it('still disconnects an established connection', async () => {
+    const sandbox = await makeRpcSandbox();
+    vi.spyOn(sandbox.client, 'isWebSocketConnected').mockReturnValue(true);
+    const disconnect = vi.spyOn(sandbox.client, 'disconnect');
+
+    await (
+      sandbox as unknown as { onStop: (p: object) => Promise<void> }
+    ).onStop({ exitCode: 137, reason: 'runtime_signal' });
+
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+});

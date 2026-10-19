@@ -3131,13 +3131,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // interruption instead of a generic disposal string. Thread the platform's
     // exit code / stop reason through so a trace can distinguish an OOM kill
     // (137) or signalled eviction (143 / 'runtime_signal') from a clean exit.
-    this.client.disconnect(
-      this.buildDisconnectCause(
-        'runtime_replaced',
-        'The sandbox container stopped while the operation was pending.',
-        params
-      )
-    );
+    //
+    // Leave an RPC connection that is still being established alone. When
+    // the platform refuses a container start, the base class reports a stop
+    // on its next alarm even though no container ran. The connection attempt
+    // keeps retrying the start within its own budget and reaches the
+    // container that does come up; tearing it down would fail the calls
+    // queued behind it.
+    if (this.transport !== 'rpc' || this.client.isWebSocketConnected()) {
+      this.client.disconnect(
+        this.buildDisconnectCause(
+          'runtime_replaced',
+          'The sandbox container stopped while the operation was pending.',
+          params
+        )
+      );
+    }
 
     // Stop local sync managers before clearing the map.
     let hadR2EgressMount = false;
