@@ -241,7 +241,9 @@ function createGitHubClient(executor: ProcessExecutor): GitHubReleaseClient {
           '--title',
           name,
           '--notes',
-          notes
+          notes,
+          // 1.0 on main owns the Latest release; 0.12.x releases never take it.
+          '--latest=false'
         ])
       );
     },

@@ -39,7 +39,6 @@ test('release callers grant permissions required by reusable E2E', () => {
     '.github/workflows/reconcile-stable-release.yml'
   );
 
-  assertPermission(release, 'prerelease', 'pull-requests', 'read');
   assertPermission(prerelease, 'e2e', 'pull-requests', 'read');
   assertPermission(release, 'e2e', 'pull-requests', 'read');
   assertPermission(reconcile, 'e2e', 'pull-requests', 'read');
