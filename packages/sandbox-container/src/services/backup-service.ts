@@ -5,6 +5,7 @@ import {
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
 import { ErrorCode, Operation } from '@repo/shared/errors';
+import { getRuntimeCertPEM } from '../cert';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
 import type { RawExecResult } from '../session';
@@ -117,7 +118,10 @@ interface UploadedBackupPart {
 export class BackupService {
   constructor(
     private logger: Logger,
-    private executionService: ExecutionService
+    private executionService: ExecutionService,
+    private readonly runtimeCertPEM: () =>
+      | string
+      | undefined = getRuntimeCertPEM
   ) {}
 
   private async executeInternal(
@@ -452,6 +456,7 @@ export class BackupService {
     for (let attempt = 1; attempt <= BACKUP_UPLOAD_MAX_ATTEMPTS; attempt++) {
       try {
         const body = archiveFile.slice(part.offset, part.offset + part.size);
+        const runtimeCertPEM = this.runtimeCertPEM();
         const response = await fetch(part.url, {
           method: 'PUT',
           headers: {
@@ -459,7 +464,8 @@ export class BackupService {
             'Content-Type': 'application/octet-stream'
           },
           body,
-          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS)
+          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS),
+          ...(runtimeCertPEM && { tls: { ca: runtimeCertPEM } })
         });
 
         if (!response.ok) {

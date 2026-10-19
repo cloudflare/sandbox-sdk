@@ -6,6 +6,7 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { expectOK } from './helpers/test-fixtures';
 
 // Dedicated port for this test file's port exposure error tests
 const PORT_LIFECYCLE_TEST_PORT = 9998;
@@ -248,7 +249,7 @@ wait`;
       `${workerUrl}/api/process/${processId}`,
       { method: 'GET', headers }
     );
-    expect(statusResponse.ok).toBe(true);
+    await expectOK(statusResponse);
     const record = (await statusResponse.json()) as Process;
     expect(record.status).toBe('killed');
   }, 90000);
@@ -615,7 +616,7 @@ while :; do :; done`;
       `${workerUrl}/api/process/${processId}`,
       { method: 'GET', headers }
     );
-    expect(statusResponse.ok).toBe(true);
+    await expectOK(statusResponse);
     const record = (await statusResponse.json()) as Process;
     expect(record.status).toBe('killed');
     expect(record.exitCode).toBe(137);

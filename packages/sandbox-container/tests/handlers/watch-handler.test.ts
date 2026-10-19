@@ -26,6 +26,25 @@ const defaultContext = {
 };
 
 describe('WatchHandler', () => {
+  it('should watch absolute paths outside /workspace', async () => {
+    const watchService = createMockWatchService();
+    (
+      watchService.watchDirectory as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ success: true, data: new ReadableStream() });
+
+    const handler = new WatchHandler(watchService, createNoOpLogger());
+    const response = await handler.handle(
+      makeRequest({ path: '/data/../data/', recursive: true }),
+      defaultContext
+    );
+
+    expect(response.status).toBe(200);
+    expect(watchService.watchDirectory).toHaveBeenCalledWith('/data', {
+      path: '/data',
+      recursive: true
+    });
+  });
+
   describe('include/exclude validation', () => {
     it('should reject requests with both include and exclude', async () => {
       const handler = new WatchHandler(

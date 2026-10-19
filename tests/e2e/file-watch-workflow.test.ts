@@ -25,6 +25,7 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { expectOK } from './helpers/test-fixtures';
 
 describe('File Watch Workflow', () => {
   let sandbox: TestSandbox | null = null;
@@ -396,7 +397,7 @@ describe('File Watch Workflow', () => {
       headers,
       body: JSON.stringify({ path: testDir })
     });
-    expect(secondResponse.ok).toBe(true);
+    await expectOK(secondResponse);
     await secondResponse.body?.cancel();
   }, 30000);
 

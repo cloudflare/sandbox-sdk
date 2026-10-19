@@ -12,10 +12,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.13.0"
+    "hono": "^4.13.7"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.12.10",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "wrangler": "^4.102.0"

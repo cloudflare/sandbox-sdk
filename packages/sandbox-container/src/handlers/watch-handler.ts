@@ -333,24 +333,6 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       ? pathPosix.resolve(input)
       : pathPosix.resolve(WORKSPACE_ROOT, input);
 
-    if (
-      resolved !== WORKSPACE_ROOT &&
-      !resolved.startsWith(`${WORKSPACE_ROOT}/`)
-    ) {
-      return {
-        success: false,
-        error: {
-          message: 'path must be inside /workspace',
-          code: ErrorCode.PERMISSION_DENIED,
-          details: {
-            path,
-            resolvedPath: resolved,
-            workspaceRoot: WORKSPACE_ROOT
-          }
-        }
-      };
-    }
-
     return { success: true, path: resolved };
   }
 }

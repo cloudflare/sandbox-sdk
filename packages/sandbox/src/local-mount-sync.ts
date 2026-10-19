@@ -1,5 +1,6 @@
 import path from 'node:path/posix';
 import type { FileWatchSSEEvent, Logger } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import type { SandboxClient } from './clients';
 import type { ContainerControlClient } from './container-control';
 import { openFileStream } from './file-stream';
@@ -19,6 +20,12 @@ const STREAM_TO_CONTAINER_THRESHOLD_BYTES = 4 * 1024 * 1024;
 // Writing a file into the mount emits a burst of modify events. Upload once
 // the burst settles instead of shipping each partial state.
 export const UPLOAD_DEBOUNCE_MS = 1500;
+
+/** Watch rejections that a retry with the same request cannot fix. */
+const PERMANENT_WATCH_ERRORS: ReadonlySet<unknown> = new Set([
+  ErrorCode.PERMISSION_DENIED,
+  ErrorCode.VALIDATION_FAILED
+]);
 
 interface R2ObjectSnapshot {
   etag: string;
@@ -343,11 +350,17 @@ export class LocalMountSyncManager {
       })
       .catch((error) => {
         if (!this.running) return;
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (PERMANENT_WATCH_ERRORS.has(Reflect.get(err, 'code'))) {
+          this.logger.error(
+            'Container rejected the mount watch; changes made in the container will not sync to R2. Update the container image to match the SDK version.',
+            err,
+            { mountPath: this.mountPath }
+          );
+          return;
+        }
         this.consecutiveWatchFailures++;
-        this.logger.error(
-          'Container watch loop failed',
-          error instanceof Error ? error : new Error(String(error))
-        );
+        this.logger.error('Container watch loop failed', err);
         this.scheduleWatchReconnect();
       });
   }

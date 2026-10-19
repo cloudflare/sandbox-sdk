@@ -6,6 +6,7 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { expectOK } from './helpers/test-fixtures';
 import type {
   BucketGetResponse,
   BucketUnmountResponse,
@@ -79,7 +80,7 @@ describe('Bucket Mounting E2E', () => {
             contentType: 'text/plain'
           })
         });
-        expect(putResponse.ok).toBe(true);
+        await expectOK(putResponse);
 
         // 2. Mount the bucket (no vi.waitFor - let BaseHttpClient handle retries)
         const mountResponse = await fetch(`${workerUrl}/api/bucket/mount`, {
@@ -93,7 +94,7 @@ describe('Bucket Mounting E2E', () => {
             }
           })
         });
-        expect(mountResponse.ok).toBe(true);
+        await expectOK(mountResponse);
         const mountResult = (await mountResponse.json()) as SuccessResponse;
         expect(mountResult.success).toBe(true);
 
@@ -132,7 +133,7 @@ describe('Bucket Mounting E2E', () => {
             headers
           }
         );
-        expect(getResponse.ok).toBe(true);
+        await expectOK(getResponse);
         const getResult = (await getResponse.json()) as BucketGetResponse;
         expect(getResult.success).toBe(true);
         expect(getResult.content.trim()).toBe(TEST_CONTENT);
@@ -143,7 +144,7 @@ describe('Bucket Mounting E2E', () => {
           headers,
           body: JSON.stringify({ mountPath: MOUNT_PATH })
         });
-        expect(unmountResponse.ok).toBe(true);
+        await expectOK(unmountResponse);
         const unmountResult =
           (await unmountResponse.json()) as BucketUnmountResponse;
         expect(unmountResult.success).toBe(true);
@@ -246,7 +247,7 @@ describe('Bucket Mounting E2E', () => {
             contentType: 'text/plain'
           })
         });
-        expect(putResponse.ok).toBe(true);
+        await expectOK(putResponse);
 
         // 2. Mount via R2 binding — no endpoint means the egress handler path is used.
         //    This catches: outboundHandlers name-lookup errors, s3fs credential-check
@@ -260,7 +261,7 @@ describe('Bucket Mounting E2E', () => {
             options: {}
           })
         });
-        expect(mountResponse.ok).toBe(true);
+        await expectOK(mountResponse);
         const mountResult = (await mountResponse.json()) as SuccessResponse;
         expect(mountResult.success).toBe(true);
 
@@ -292,7 +293,7 @@ describe('Bucket Mounting E2E', () => {
           `${workerUrl}/api/bucket/get?key=${WRITTEN_FILE}`,
           { method: 'GET', headers }
         );
-        expect(getResponse.ok).toBe(true);
+        await expectOK(getResponse);
         const getResult = (await getResponse.json()) as BucketGetResponse;
         expect(getResult.success).toBe(true);
         expect(getResult.content.trim()).toBe(WRITTEN_CONTENT);
@@ -303,7 +304,7 @@ describe('Bucket Mounting E2E', () => {
           headers,
           body: JSON.stringify({ mountPath: MOUNT_PATH })
         });
-        expect(unmountResponse.ok).toBe(true);
+        await expectOK(unmountResponse);
         const unmountResult =
           (await unmountResponse.json()) as BucketUnmountResponse;
         expect(unmountResult.success).toBe(true);
