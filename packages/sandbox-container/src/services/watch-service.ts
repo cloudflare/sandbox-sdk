@@ -1,4 +1,3 @@
-import { posix as pathPosix } from 'node:path';
 import type {
   CheckChangesRequest,
   CheckChangesResult,
@@ -10,7 +9,6 @@ import type {
 import { logCanonicalEvent } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { Subprocess } from 'bun';
-import { CONFIG } from '../config';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
 
@@ -89,79 +87,12 @@ export class WatchService {
     path: string,
     options: WatchRequest = { path }
   ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
-    const normalizedPath = this.normalizePublicWatchPath(path);
-    if (!normalizedPath.success) {
-      return serviceError(normalizedPath.error);
-    }
-    return this.startWatchDirectory(normalizedPath.path, {
-      ...options,
-      path: normalizedPath.path
-    });
-  }
-
-  /** @internal Watches an absolute local bucket mount root. */
-  async watchMountDirectory(
-    path: string,
-    options: WatchRequest = { path }
-  ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
-    if (!path.startsWith('/') || path.includes('\0')) {
-      return serviceError({
-        message: 'mount watch path must be an absolute path',
-        code: ErrorCode.VALIDATION_FAILED,
-        details: { path }
-      });
-    }
-
-    const normalizedPath = pathPosix.resolve(path);
-    return this.startWatchDirectory(normalizedPath, {
-      ...options,
-      path: normalizedPath
-    });
-  }
-
-  private startWatchDirectory(
-    path: string,
-    options: WatchRequest
-  ): ServiceResult<ReadableStream<Uint8Array>> {
     const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
       return serviceError(watchResult.error);
     }
 
     return serviceSuccess(this.createSubscriberStream(watchResult.data.watch));
-  }
-
-  private normalizePublicWatchPath(path: string):
-    | { success: true; path: string }
-    | {
-        success: false;
-        error: {
-          message: string;
-          code: string;
-          details: Record<string, unknown>;
-        };
-      } {
-    const input = path.trim();
-    const workspaceRoot = CONFIG.DEFAULT_CWD;
-    const resolved = input.startsWith('/')
-      ? pathPosix.resolve(input)
-      : pathPosix.resolve(workspaceRoot, input);
-
-    if (
-      input.includes('\0') ||
-      (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`))
-    ) {
-      return {
-        success: false,
-        error: {
-          message: `path must be inside ${workspaceRoot}`,
-          code: ErrorCode.PERMISSION_DENIED,
-          details: { path, resolvedPath: resolved, workspaceRoot }
-        }
-      };
-    }
-
-    return { success: true, path: resolved };
   }
 
   /**
@@ -171,15 +102,7 @@ export class WatchService {
     path: string,
     options: CheckChangesRequest = { path }
   ): Promise<ServiceResult<CheckChangesResult>> {
-    const normalizedPath = this.normalizePublicWatchPath(path);
-    if (!normalizedPath.success) {
-      return serviceError(normalizedPath.error);
-    }
-
-    const watchResult = this.getOrCreateWatch(normalizedPath.path, {
-      ...options,
-      path: normalizedPath.path
-    });
+    const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
       return serviceError(watchResult.error);
     }
@@ -198,7 +121,7 @@ export class WatchService {
             ? error.message
             : 'Failed to establish retained change state',
         code: ErrorCode.WATCH_START_ERROR,
-        details: { path: normalizedPath.path }
+        details: { path }
       });
     }
   }

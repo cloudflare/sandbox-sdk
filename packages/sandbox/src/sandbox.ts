@@ -1,4 +1,3 @@
-import { posix as pathPosix } from 'node:path';
 import {
   ContainerProxy as BaseContainerProxy,
   Container,
@@ -1878,17 +1877,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      const existingMount = this.activeMounts.get(mountPath);
-      if (existingMount?.mountType === 'local-sync') {
-        if (existingMount.degradedReason) {
-          await existingMount.syncManager.stop();
-          this.activeMounts.delete(mountPath);
-        } else {
-          throw new InvalidMountConfigError(
-            `Mount path already in use: ${mountPath}`
-          );
-        }
-      } else if (existingMount) {
+      if (this.activeMounts.has(mountPath)) {
         throw new InvalidMountConfigError(
           `Mount path already in use: ${mountPath}`
         );
@@ -1896,7 +1885,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const sessionId = await this.ensureDefaultSession();
 
-      let mountInfo: LocalSyncMountInfo;
       const syncManager = new LocalMountSyncManager({
         bucket: r2Binding,
         mountPath,
@@ -1904,14 +1892,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         readOnly: options.readOnly ?? false,
         client: this.client,
         sessionId,
-        logger: this.logger,
-        onReverseSyncDegraded: (error) => {
-          mountInfo.mounted = false;
-          mountInfo.degradedReason = error.message;
-        }
+        logger: this.logger
       });
 
-      mountInfo = {
+      const mountInfo: LocalSyncMountInfo = {
         mountId: crypto.randomUUID(),
         mountType: 'local-sync',
         bucket,
@@ -3825,11 +3809,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return await this.proxyPreviewRequest(request);
     }
 
-    if (url.pathname === '/api/watch/mount') {
-      const rejection = await this.rejectUnregisteredMountWatch(request);
-      if (rejection) return rejection;
-    }
-
     // Capture and store the sandbox name from the header if present
     if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
       const name = request.headers.get('X-Sandbox-Name')!;
@@ -3868,53 +3847,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
-  }
-
-  private async rejectUnregisteredMountWatch(
-    request: Request
-  ): Promise<Response | null> {
-    let requestedPath: unknown;
-    try {
-      const body = (await request.clone().json()) as Record<string, unknown>;
-      requestedPath = body.path;
-    } catch {
-      return this.mountWatchPermissionDenied();
-    }
-
-    if (
-      typeof requestedPath !== 'string' ||
-      requestedPath.includes('\0') ||
-      !requestedPath.trim().startsWith('/')
-    ) {
-      return this.mountWatchPermissionDenied();
-    }
-
-    const resolvedPath = pathPosix.resolve(requestedPath.trim());
-    const isRegistered = Array.from(this.activeMounts.entries()).some(
-      ([mountPath, mount]) =>
-        mount.mountType === 'local-sync' &&
-        pathPosix.resolve(mountPath) === resolvedPath
-    );
-    return isRegistered
-      ? null
-      : this.mountWatchPermissionDenied(requestedPath, resolvedPath);
-  }
-
-  private mountWatchPermissionDenied(
-    path?: string,
-    resolvedPath?: string
-  ): Response {
-    const error: ErrorResponse = {
-      code: ErrorCode.PERMISSION_DENIED,
-      message: 'mount watch path must be a registered local mount root',
-      context: { path, resolvedPath },
-      httpStatus: 403,
-      timestamp: new Date().toISOString()
-    };
-    return new Response(JSON.stringify(error), {
-      status: error.httpStatus,
-      headers: { 'Content-Type': 'application/json' }
-    });
   }
 
   wsConnect(request: Request, port: number): Promise<Response> {

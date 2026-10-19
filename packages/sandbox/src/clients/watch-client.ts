@@ -7,12 +7,7 @@ import {
   type SSEPartialEvent,
   type WatchRequest
 } from '@repo/shared';
-import { translateRouteMountWatchError } from '../watch-capability';
 import { BaseHttpClient } from './base-client';
-
-const WATCH_LOCAL_MOUNT_ROUTE = Symbol('watch-local-mount-route');
-
-type MountWatchFetch = (request: Request) => Promise<Response>;
 
 /**
  * Client for file watch operations
@@ -41,39 +36,10 @@ export class WatchClient extends BaseHttpClient implements SandboxWatchAPI {
    * @param request - Watch request with path and options
    */
   async watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>> {
-    return this.startWatch('/api/watch', request);
-  }
+    const stream = await this.doStreamFetch('/api/watch', request);
+    const readyStream = await this.waitForReadiness(stream);
 
-  async [WATCH_LOCAL_MOUNT_ROUTE](
-    request: WatchRequest,
-    doFetch?: MountWatchFetch
-  ): Promise<ReadableStream<Uint8Array>> {
-    if (!doFetch) {
-      return this.startWatch('/api/watch/mount', request);
-    }
-
-    const baseURL = this.options.baseUrl ?? 'http://localhost:3000';
-    const endpoint = new URL('/api/watch/mount', baseURL);
-    const response = await doFetch(
-      new Request(endpoint, {
-        method: 'POST',
-        headers: {
-          ...this.options.defaultHeaders,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(request)
-      })
-    );
-    const stream = await this.handleStreamResponse(response);
-    return this.waitForReadiness(stream);
-  }
-
-  private async startWatch(
-    endpoint: string,
-    request: WatchRequest
-  ): Promise<ReadableStream<Uint8Array>> {
-    const stream = await this.doStreamFetch(endpoint, request);
-    return this.waitForReadiness(stream);
+    return readyStream;
   }
 
   /**
@@ -165,18 +131,5 @@ export class WatchClient extends BaseHttpClient implements SandboxWatchAPI {
         return reader.cancel();
       }
     });
-  }
-}
-
-/** @internal Calls the container-local mount watch route. */
-export async function watchLocalMountRoute(
-  client: WatchClient,
-  request: WatchRequest,
-  doFetch?: MountWatchFetch
-): Promise<ReadableStream<Uint8Array>> {
-  try {
-    return await client[WATCH_LOCAL_MOUNT_ROUTE](request, doFetch);
-  } catch (error) {
-    translateRouteMountWatchError(error);
   }
 }

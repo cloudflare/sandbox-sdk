@@ -1,9 +1,7 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalMountSyncManager } from '../src/local-mount-sync';
-import { UnsupportedMountWatchError } from '../src/watch-capability';
 
 // ---------------------------------------------------------------------------
 // Helpers to build mock R2 objects
@@ -104,16 +102,16 @@ function createMockFileClient() {
 }
 
 function createMockWatchClient() {
-  const createOpenStream = () =>
-    new ReadableStream({
-      start() {
-        // Stream stays open — test will stop the manager to clean up
-      }
-    });
-
+  // Returns a stream that never emits (watch loop runs in background)
   return {
-    watch: vi.fn(async (_request?: unknown) => createOpenStream()),
-    watchMount: vi.fn(async (_request?: unknown) => createOpenStream())
+    watch: vi.fn(
+      async () =>
+        new ReadableStream({
+          start() {
+            // Stream stays open — test will stop the manager to clean up
+          }
+        })
+    )
   };
 }
 
@@ -143,8 +141,7 @@ function createControllableWatchClient() {
 
   return {
     client: {
-      watch: vi.fn(async () => stream),
-      watchMount: vi.fn(async () => stream)
+      watch: vi.fn(async () => stream)
     },
     emit,
     close
@@ -157,8 +154,7 @@ function createMockSandboxClient(
 ) {
   return {
     files: fileClient,
-    watch: watchClient,
-    [WATCH_LOCAL_MOUNT]: vi.fn((request) => watchClient.watchMount(request))
+    watch: watchClient
   } as any;
 }
 
@@ -283,8 +279,8 @@ describe('LocalMountSyncManager', () => {
 
       await manager.start();
 
-      expect(watchClient.watch).not.toHaveBeenCalled();
-      expect(watchClient.watchMount).toHaveBeenCalledWith({
+      // Watch should be called for bidirectional sync
+      expect(watchClient.watch).toHaveBeenCalledWith({
         path: '/mnt/data',
         recursive: true,
         sessionId: 'test-session'
@@ -292,170 +288,39 @@ describe('LocalMountSyncManager', () => {
 
       await manager.stop();
     });
+  });
 
-    it('should surface an initial mount watch configuration error without retrying', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const error = Object.assign(
-        new Error('path must be inside the mount root'),
+  describe('container watch reconnects', () => {
+    async function startWithFailingWatch(error: Error) {
+      const watchClient = { watch: vi.fn().mockRejectedValue(error) };
+      const manager = new LocalMountSyncManager({
+        bucket: createMockR2Bucket(new Map()) as unknown as R2Bucket,
+        mountPath: '/data',
+        prefix: undefined,
+        readOnly: false,
+        client: createMockSandboxClient(createMockFileClient(), watchClient),
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+      await manager.start();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await manager.stop();
+      return watchClient.watch;
+    }
+
+    it('should stop after the container rejects the watch path', async () => {
+      const rejected = Object.assign(
+        new Error('path must be inside /workspace'),
         { code: 'PERMISSION_DENIED' }
       );
-      const watchClient = {
-        watch: vi.fn(async () => {
-          throw error;
-        }),
-        watchMount: vi.fn(async () => {
-          throw error;
-        })
-      };
-      const client = createMockSandboxClient(fileClient, watchClient);
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/data',
-        prefix: undefined,
-        readOnly: false,
-        client,
-        sessionId: 'test-session',
-        logger,
-        pollIntervalMs: 1000
-      });
-
-      await expect(manager.start()).rejects.toThrow(error);
-      await vi.advanceTimersByTimeAsync(60_000);
-
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(1);
-      await manager.stop();
+      expect(await startWithFailingWatch(rejected)).toHaveBeenCalledTimes(1);
     });
 
-    it('should record a permanent failure after the watch was established', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const { client: watchClient, close } = createControllableWatchClient();
-      const permanentError = Object.assign(new Error('permission revoked'), {
-        code: 'PERMISSION_DENIED'
-      });
-      const client = createMockSandboxClient(fileClient, watchClient);
-      const degradedLogger = createNoOpLogger();
-      degradedLogger.child = () => degradedLogger;
-      const logError = vi.spyOn(degradedLogger, 'error');
-      const onReverseSyncDegraded = vi.fn();
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/data',
-        prefix: undefined,
-        readOnly: false,
-        client,
-        sessionId: 'test-session',
-        logger: degradedLogger,
-        pollIntervalMs: 1000,
-        onReverseSyncDegraded
-      });
-
-      await manager.start();
-      watchClient.watchMount.mockRejectedValueOnce(permanentError);
-      close();
-      await vi.advanceTimersByTimeAsync(1000);
-
-      expect(manager.getReverseSyncError()).toBe(permanentError);
-      expect(onReverseSyncDegraded).toHaveBeenCalledWith(permanentError);
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(2);
-      expect(logError).toHaveBeenCalledWith(
-        expect.stringContaining('bucket.local_sync_watch'),
-        expect.any(Error),
-        expect.objectContaining({ degraded: true, mountPath: '/data' })
-      );
-
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(2);
-      await manager.stop();
-    });
-
-    it('should retry an initial transient mount watch failure', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const watchClient = createMockWatchClient();
-      watchClient.watchMount.mockRejectedValueOnce(
-        Object.assign(new Error('watch setup timed out'), {
-          code: 'WATCH_START_ERROR'
-        })
-      );
-      const client = createMockSandboxClient(fileClient, watchClient);
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/data',
-        prefix: undefined,
-        readOnly: false,
-        client,
-        sessionId: 'test-session',
-        logger,
-        pollIntervalMs: 1000
-      });
-
-      await expect(manager.start()).resolves.toBeUndefined();
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(2);
-      await manager.stop();
-    });
-
-    it('should fall back to public watch for workspace mounts on older images', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const watchClient = createMockWatchClient();
-      watchClient.watchMount.mockRejectedValueOnce(
-        new UnsupportedMountWatchError()
-      );
-      const client = createMockSandboxClient(fileClient, watchClient);
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/workspace/data',
-        prefix: undefined,
-        readOnly: false,
-        client,
-        sessionId: 'test-session',
-        logger
-      });
-
-      await manager.start();
-
-      expect(watchClient.watchMount).toHaveBeenCalledTimes(1);
-      expect(watchClient.watch).toHaveBeenCalledWith({
-        path: '/workspace/data',
-        recursive: true,
-        sessionId: 'test-session'
-      });
-      await manager.stop();
-    });
-
-    it('should explain how to update an older image for /data mounts', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const watchClient = createMockWatchClient();
-      watchClient.watchMount.mockRejectedValueOnce(
-        new UnsupportedMountWatchError()
-      );
-      const client = createMockSandboxClient(fileClient, watchClient);
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/data',
-        prefix: undefined,
-        readOnly: false,
-        client,
-        sessionId: 'test-session',
-        logger
-      });
-
-      await expect(manager.start()).rejects.toThrow(
-        'Rebuild the container image with the current @cloudflare/sandbox Dockerfile'
-      );
-      expect(watchClient.watch).not.toHaveBeenCalled();
-      await manager.stop();
+    it('should keep retrying transient failures', async () => {
+      const transient = new Error('connection reset');
+      const watch = await startWithFailingWatch(transient);
+      expect(watch.mock.calls.length).toBeGreaterThan(1);
     });
   });
 
@@ -841,7 +706,7 @@ describe('LocalMountSyncManager', () => {
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
-        mountPath: '/data',
+        mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
         client,
@@ -856,7 +721,7 @@ describe('LocalMountSyncManager', () => {
       emit({
         type: 'event',
         eventType: 'create',
-        path: '/data/hello.txt',
+        path: '/mnt/data/hello.txt',
         isDirectory: false,
         timestamp: new Date().toISOString()
       });
@@ -865,7 +730,7 @@ describe('LocalMountSyncManager', () => {
 
       // Should read the file from container (base64)
       expect(fileClient.readFile).toHaveBeenCalledWith(
-        '/data/hello.txt',
+        '/mnt/data/hello.txt',
         'test-session',
         { encoding: 'base64' }
       );

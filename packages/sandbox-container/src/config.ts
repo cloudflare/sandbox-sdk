@@ -1,5 +1,3 @@
-import { WORKSPACE_ROOT } from '@repo/shared/internal';
-
 /**
  * How long to wait for an interpreter process to spawn and become ready.
  * If an interpreter doesn't start within this time, something is fundamentally
@@ -52,7 +50,7 @@ const STREAM_CHUNK_DELAY_MS = 100;
  *
  * Default: /workspace
  */
-const DEFAULT_CWD = WORKSPACE_ROOT;
+const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
   INTERPRETER_SPAWN_TIMEOUT_MS,
