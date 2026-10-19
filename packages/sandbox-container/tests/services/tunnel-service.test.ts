@@ -285,6 +285,38 @@ describe('TunnelService > runQuickTunnel', () => {
   });
 });
 
+describe('TunnelService > ensureTunnelRun', () => {
+  it('names the run holding the port in a port conflict', async () => {
+    // The SDK stops a run it lost track of using these ids.
+    const service = new TunnelService(mockLogger);
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.ensureTunnelRun({
+        tunnelId: 'quick-a',
+        runId: 'run-a',
+        mode: 'quick',
+        port: 8080
+      })
+    );
+
+    const second = await service.ensureTunnelRun({
+      tunnelId: 'quick-b',
+      runId: 'run-b',
+      mode: 'quick',
+      port: 8080
+    });
+
+    expect(second.success).toBe(false);
+    if (second.success) return;
+    expect(second.error.code).toBe('TUNNEL_RUN_CONFLICT');
+    expect(second.error.details).toMatchObject({
+      port: 8080,
+      activeRunId: 'run-a',
+      activeTunnelId: 'quick-a'
+    });
+    expect(fakeProcs).toHaveLength(1);
+  });
+});
+
 describe('TunnelService > destroyTunnel', () => {
   it('SIGTERMs cloudflared and removes the record', async () => {
     const service = new TunnelService(mockLogger);

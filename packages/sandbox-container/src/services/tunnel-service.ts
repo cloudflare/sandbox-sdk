@@ -273,7 +273,12 @@ export class TunnelService {
         return serviceError({
           message: `Port ${port} already active under run ${rec.request.runId}`,
           code: 'TUNNEL_RUN_CONFLICT',
-          details: { runId, port, activeRunId: rec.request.runId }
+          details: {
+            runId,
+            port,
+            activeRunId: rec.request.runId,
+            activeTunnelId: rec.request.tunnelId
+          }
         });
       }
       if (rec.request.tunnelId === tunnelId) {

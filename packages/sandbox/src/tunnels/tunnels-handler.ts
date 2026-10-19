@@ -11,6 +11,7 @@
 
 import { RpcTarget } from 'cloudflare:workers';
 import type {
+  EnsureTunnelRunRequest,
   EnsureTunnelRunResult,
   Logger,
   NamedTunnelInfo,
@@ -97,6 +98,12 @@ export interface TunnelsHandlerHost {
   currentRuntime?: CurrentRuntimeIdentity;
   /** Logical sandbox lifetime fence for recovery across destroy(). */
   currentLifetime?: CurrentSandboxLifetime;
+  /**
+   * Per-port lock from {@link createPortLock}. Pass the same lock to every
+   * handler built for one Durable Object, so a handler rebuilt after a
+   * transport switch still waits for operations started by the old one.
+   */
+  withPortLock?: WithPortLock;
 }
 
 export interface TunnelsHandler {
@@ -135,7 +142,10 @@ export interface TunnelsHandle {
 }
 
 /** Per-port serializer shared between `TunnelsRpcTarget` and the exit hook. */
-type WithPortLock = <T>(port: number, fn: () => Promise<T>) => Promise<T>;
+export type WithPortLock = <T>(
+  port: number,
+  fn: () => Promise<T>
+) => Promise<T>;
 
 type QuickTunnelRunIdentity = {
   tunnelId: string;
@@ -190,6 +200,31 @@ function isTunnelNotFoundError(error: unknown): boolean {
 
 function isTunnelAlreadyRunningError(error: unknown): boolean {
   return hasErrorCode(error, 'TUNNEL_ALREADY_RUNNING');
+}
+
+/**
+ * The run holding `request.port` when the container rejected `request`
+ * with a port conflict. Containers older than this SDK omit
+ * `activeTunnelId`, which `stopTunnelRun` needs, so their conflicts yield
+ * `null`.
+ */
+function conflictingRunOnPort(
+  error: unknown,
+  request: EnsureTunnelRunRequest
+): QuickTunnelRunIdentity | null {
+  if (!hasErrorCode(error, 'TUNNEL_RUN_CONFLICT')) return null;
+  const context = (error as { context?: Record<string, unknown> }).context;
+  const runId = context?.activeRunId;
+  const tunnelId = context?.activeTunnelId;
+  if (
+    context?.port !== request.port ||
+    typeof runId !== 'string' ||
+    typeof tunnelId !== 'string' ||
+    runId === request.runId
+  ) {
+    return null;
+  }
+  return { tunnelId, runId };
 }
 
 /**
@@ -377,6 +412,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           throw error;
         }
         if (recoveryAttempts >= TUNNEL_GET_MAX_RECOVERY_ATTEMPTS) {
+          await this.#stopAbandonedQuickRun(port, recovery.quickRun);
           await this.#clearQuickTunnelStorage(port);
           throw createTunnelInterruptedError({
             reason: 'recovery_exhausted',
@@ -389,10 +425,55 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         }
         recoveryAttempts++;
         if (interrupted.context.reason === 'runtime_replaced') {
+          await this.#stopAbandonedQuickRun(port, recovery.quickRun);
           recovery.quickRun = undefined;
         }
         await this.#clearQuickTunnelStorage(port);
       }
+    }
+  }
+
+  /**
+   * Stop a quick tunnel run that `get()` is giving up on, so its
+   * cloudflared does not keep holding the port. Best effort: the run may
+   * have died with a replaced container.
+   */
+  async #stopAbandonedQuickRun(
+    port: number,
+    run: QuickTunnelRunIdentity | undefined
+  ): Promise<void> {
+    if (!run) return;
+    try {
+      await this.#host.client.tunnels.stopTunnelRun(run);
+    } catch (error) {
+      this.#host.logger.warn('tunnel.get: abandoned run cleanup failed', {
+        port,
+        ...run,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Start or replay a quick tunnel run. The Durable Object owns every
+   * tunnel run in its container and holds the port lock, so a different
+   * run already on the port lost its storage record. Stop it and retry
+   * once instead of failing every later `get()` for the port.
+   */
+  async #ensureQuickTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult> {
+    try {
+      return await this.#host.client.tunnels.ensureTunnelRun(request);
+    } catch (error) {
+      const orphan = conflictingRunOnPort(error, request);
+      if (!orphan) throw error;
+      this.#host.logger.warn('tunnel.get: stopping orphaned run on port', {
+        port: request.port,
+        ...orphan
+      });
+      await this.#host.client.tunnels.stopTunnelRun(orphan);
+      return await this.#host.client.tunnels.ensureTunnelRun(request);
     }
   }
 
@@ -521,7 +602,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     let ensureResult: EnsureTunnelRunResult;
     let runtime = runtimeBeforeAdmission;
     try {
-      ensureResult = await this.#host.client.tunnels.ensureTunnelRun({
+      ensureResult = await this.#ensureQuickTunnelRun({
         tunnelId,
         runId,
         mode: 'quick',
@@ -858,31 +939,26 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
   }
 }
 
-export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
-  // Per-port serialization lock. Any operation that mutates the tunnel
-  // for a given port — get() on a cache miss, destroy() — queues behind
-  // the previous operation on the same port. Two consequences:
-  //
-  //   - get(8080) followed by destroy(8080) is well-ordered: the destroy
-  //     observes whatever the get just wrote, even though both yield to
-  //     external RPCs in the middle.
-  //   - Two concurrent get(8080) calls share the first call's record:
-  //     the second runs after the first writes storage and takes the
-  //     hit branch (so no double cloudflared spawn).
-  //
-  // The lock is a plain Promise chain keyed by port. `transaction()` on
-  // the storage write still matters for *cross-port* writes — a
-  // get(8080) and get(8081) running in parallel are independent here.
-  //
-  // The lock is shared between the public `TunnelsRpcTarget` and the
-  // private `handleTunnelExit` callback so an exit hook can't race a
-  // concurrent get/destroy on the same port.
+/**
+ * Per-port serialization lock. Any operation that mutates the tunnel for
+ * a given port — get() on a cache miss, destroy(), the exit callback —
+ * queues behind the previous operation on the same port. Two
+ * consequences:
+ *
+ *   - get(8080) followed by destroy(8080) is well-ordered: the destroy
+ *     observes whatever the get just wrote, even though both yield to
+ *     external RPCs in the middle.
+ *   - Two concurrent get(8080) calls share the first call's record: the
+ *     second runs after the first writes storage and takes the hit branch
+ *     (so no double cloudflared spawn).
+ *
+ * The lock is a plain Promise chain keyed by port. `transaction()` on the
+ * storage write still matters for *cross-port* writes — a get(8080) and
+ * get(8081) running in parallel are independent here.
+ */
+export function createPortLock(): WithPortLock {
   const portLocks = new Map<number, Promise<unknown>>();
-
-  const withPortLock: WithPortLock = <T>(
-    port: number,
-    fn: () => Promise<T>
-  ): Promise<T> => {
+  return <T>(port: number, fn: () => Promise<T>): Promise<T> => {
     const previous = portLocks.get(port) ?? Promise.resolve();
     const next = previous.then(fn, fn);
     // Swallow rejections on the chain so a failed op doesn't poison
@@ -893,6 +969,10 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
     );
     return next;
   };
+}
+
+export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
+  const withPortLock = host.withPortLock ?? createPortLock();
 
   const tunnels = new TunnelsRpcTarget(host, withPortLock);
 
