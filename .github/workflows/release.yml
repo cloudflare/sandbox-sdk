@@ -1,10 +1,12 @@
 name: Release
 
+# v0-preview maintains the 0.13.0-next preview line. Each push publishes a
+# prerelease under the npm `next` tag. The stable jobs below are kept from the
+# old next/main workflow and never run here; 1.0 on main owns stable releases.
 on:
   push:
     branches:
-      - main
-      - next
+      - v0-preview
 
 # Serialize releases per branch so an older build cannot overwrite a newer
 # Worker and container deployment after finishing out of order.
@@ -24,7 +26,7 @@ env:
 jobs:
   # --- Prerelease channels ---
   prerelease:
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/next' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0-preview' }}
     uses: ./.github/workflows/reusable-prerelease.yml
     permissions:
       id-token: write
