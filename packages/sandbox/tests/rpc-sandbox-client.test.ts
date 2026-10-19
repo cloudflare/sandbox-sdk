@@ -621,7 +621,8 @@ describe('translateRPCError', () => {
     'TUNNEL_NOT_FOUND',
     'TUNNEL_ALREADY_RUNNING',
     'TUNNEL_RUN_CONFLICT',
-    'TUNNEL_START_ERROR'
+    'TUNNEL_START_ERROR',
+    'CLOUDFLARED_NOT_FOUND'
   ])('keeps the container tunnel error code %s', async (code) => {
     // An unregistered code falls through to transport classification, which
     // tunnels.get() retries as a dropped connection.

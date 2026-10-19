@@ -544,49 +544,49 @@ describe('tunnels handler > quick lifecycle recovery', () => {
 
   it('serializes a port across handlers that share a lock', async () => {
     // The Sandbox rebuilds its handler on a transport switch while the old
-    // handler's get() may still be running. Without a shared lock, the new
-    // handler could see the old run as an orphan and stop it.
+    // handler's get() may still be running. The rebuilt handler must wait
+    // and reuse that run rather than start a second one or stop it.
     const { client } = makeClient();
+    const storage = makeStorage();
     const withPortLock = createPortLock();
     const build = () =>
       createTunnelsHandler({
         client: client as unknown as Parameters<
           typeof createTunnelsHandler
         >[0]['client'],
-        storage: makeStorage(),
+        storage,
         logger: makeLogger(),
         ...makeRuntimeFences(),
         withPortLock
       } as unknown as Parameters<typeof createTunnelsHandler>[0]).tunnels;
-    const firstAdmission = Promise.withResolvers<EnsureTunnelRunResult>();
-    client.tunnels.ensureTunnelRun
-      .mockReturnValueOnce(firstAdmission.promise)
-      .mockImplementation(async (request) => ({
+    const firstAdmission = Promise.withResolvers<void>();
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
+      await firstAdmission.promise;
+      return {
         started: true,
         run: {
           tunnelId: request.tunnelId,
           runId: request.runId,
           mode: 'quick',
           port: request.port,
-          url: 'https://second.trycloudflare.com',
-          hostname: 'second.trycloudflare.com',
+          url: 'https://first.trycloudflare.com',
+          hostname: 'first.trycloudflare.com',
           startedAt: '2026-05-13T00:00:00.000Z'
         }
-      }));
+      };
+    });
 
     const firstGet = build().get(8080);
     await vi.waitFor(() => {
       expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     });
     const secondGet = build().get(8080);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    firstAdmission.resolve();
 
+    const [first, second] = await Promise.all([firstGet, secondGet]);
+    expect(second).toEqual(first);
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
-    firstAdmission.reject(new Error('first get failed'));
-    await expect(firstGet).rejects.toThrow('first get failed');
-    await expect(secondGet).resolves.toMatchObject({
-      hostname: 'second.trycloudflare.com'
-    });
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
   });
 
   it('surfaces a port conflict from an older container without retrying', async () => {
