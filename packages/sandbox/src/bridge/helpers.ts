@@ -139,13 +139,33 @@ export function validateTerminalId(id: string): string | null {
 /**
  * Convert an SSE stream from readFileStream() into a raw byte stream.
  * Decodes base64 chunks for binary files and UTF-8-encodes text chunks.
+ * Reads nothing from the source until the returned stream is pulled.
  */
 export function sseToByteStream(
   sse: ReadableStream<Uint8Array>
 ): ReadableStream<Uint8Array> {
+  return chunksToByteStream(streamFile(sse)[Symbol.asyncIterator]());
+}
+
+/**
+ * Like sseToByteStream(), but reads up to the first chunk before returning.
+ * A missing file arrives as an error event inside a successful stream, so it
+ * rejects here, while the caller can still choose the HTTP status.
+ */
+export async function openSSEByteStream(
+  sse: ReadableStream<Uint8Array>
+): Promise<ReadableStream<Uint8Array>> {
+  const iterator = streamFile(sse)[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  return chunksToByteStream(iterator, first);
+}
+
+function chunksToByteStream(
+  iterator: AsyncIterator<string | Uint8Array>,
+  first?: IteratorResult<string | Uint8Array>
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const iterator: AsyncIterator<string | Uint8Array> =
-    streamFile(sse)[Symbol.asyncIterator]();
+  let pending = first;
   let finished = false;
 
   async function finish(cancelSource: boolean): Promise<void> {
@@ -159,7 +179,8 @@ export function sseToByteStream(
     {
       async pull(controller) {
         try {
-          const result = await iterator.next();
+          const result = pending ?? (await iterator.next());
+          pending = undefined;
           if (result.done) {
             await finish(false);
             controller.close();

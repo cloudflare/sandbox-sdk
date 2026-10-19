@@ -35,6 +35,15 @@ describe('GET /v1/sandbox/:id/file/* — path validation', () => {
     expect(body).toBe('file content');
   });
 
+  it('returns an empty body for an empty file', async () => {
+    mockSandbox.readFileStream.mockResolvedValue(createSSEFileStream(''));
+
+    const res = await readRequest('workspace/empty.txt');
+
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+  });
+
   it('rejects path traversal via ..', async () => {
     const res = await readRequest('workspace/../etc/passwd');
     expect(res.status).toBe(403);
@@ -71,6 +80,49 @@ describe('GET /v1/sandbox/:id/file/* — path validation', () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe('workspace_read_not_found');
+  });
+
+  it('returns 404 when the file stream reports a missing file', async () => {
+    const encoder = new TextEncoder();
+    mockSandbox.readFileStream.mockResolvedValue(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ type: 'error', error: 'File not found: /workspace/missing.txt' })}\n\n`
+            )
+          );
+          controller.close();
+        }
+      })
+    );
+    const res = await readRequest('workspace/missing.txt');
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('workspace_read_not_found');
+  });
+
+  it('returns 502 when another stream error names a file called "file not found"', async () => {
+    const encoder = new TextEncoder();
+    mockSandbox.readFileStream.mockResolvedValue(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: 'error',
+                error: "Failed to get file metadata for '/workspace/file not found.txt': EACCES"
+              })}\n\n`
+            )
+          );
+          controller.close();
+        }
+      })
+    );
+    const res = await readRequest('workspace/file%20not%20found.txt');
+
+    expect(res.status).toBe(502);
   });
 
   it('returns 502 on SDK transport error', async () => {
