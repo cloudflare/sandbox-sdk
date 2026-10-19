@@ -1207,9 +1207,84 @@ describe('Sandbox R2 egress mounts', () => {
     expect(proxyResponse.status).toBe(200);
     expect(
       mockCtx.container.interceptOutboundHttp.mock.invocationCallOrder[0]
-    ).toBeLessThan(mounts.ensureDirectory.mock.invocationCallOrder[0]);
+    ).toBeLessThan(mounts.mountS3FSAndVerify.mock.invocationCallOrder[0]);
     expect(mounts.ensureDirectory).toHaveBeenCalledWith('/mnt/data');
     expect(mounts.mountS3FSAndVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs R2 mount setup steps concurrently before starting s3fs', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+    const mounts = installMountClient(sandbox);
+    const { files } = (sandbox as SandboxWithClient).client;
+    const setup = Promise.withResolvers<undefined>();
+    vi.mocked(files.writeFile).mockReturnValue(setup.promise as never);
+    mounts.ensureDirectory.mockReturnValue(setup.promise);
+    mockCtx.container.interceptOutboundHttp.mockReturnValue(setup.promise);
+    const headerChmod = Promise.withResolvers<undefined>();
+    mounts.chmodOwnerOnly.mockImplementation(async (path?: unknown) => {
+      if (String(path).includes('ahbe')) await headerChmod.promise;
+    });
+
+    const mount = sandbox.mountBucket('MY_BUCKET', '/mnt/data', {});
+
+    await vi.waitFor(() => {
+      expect(files.writeFile).toHaveBeenCalledTimes(2);
+      expect(mockCtx.container.interceptOutboundHttp).toHaveBeenCalledTimes(1);
+      expect(mounts.ensureDirectory).toHaveBeenCalledTimes(1);
+    });
+
+    setup.resolve(undefined);
+    await vi.waitFor(() =>
+      expect(mounts.chmodOwnerOnly).toHaveBeenCalledTimes(2)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mounts.mountS3FSAndVerify).not.toHaveBeenCalled();
+
+    headerChmod.resolve(undefined);
+    await mount;
+    expect(mounts.mountS3FSAndVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for in-flight R2 setup steps before cleaning up a failed mount', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+    const mounts = installMountClient(sandbox);
+    const { files } = (sandbox as SandboxWithClient).client;
+    vi.mocked(files.writeFile).mockRejectedValue(new Error('disk full'));
+    const routeUpdate = Promise.withResolvers<undefined>();
+    mockCtx.container.interceptOutboundHttp.mockReturnValueOnce(
+      routeUpdate.promise
+    );
+
+    const mount = sandbox.mountBucket('MY_BUCKET', '/mnt/data', {});
+    mount.catch(() => {});
+
+    await vi.waitFor(() => expect(files.writeFile).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mounts.deleteFile).not.toHaveBeenCalled();
+    expect(mockCtx.container.interceptOutboundHttp).toHaveBeenCalledTimes(1);
+
+    routeUpdate.resolve(undefined);
+    await expect(mount).rejects.toThrow('disk full');
+    expect(mounts.deleteFile).toHaveBeenCalledTimes(2);
+    expect(mockCtx.exports.ContainerProxy).toHaveBeenLastCalledWith({
+      props: expect.objectContaining({
+        outboundByHostOverrides: {
+          'r2.internal': {
+            method: 'r2EgressMount',
+            params: { buckets: {} }
+          }
+        }
+      })
+    });
+    expect(mounts.mountS3FSAndVerify).not.toHaveBeenCalled();
   });
 
   it('throws a clear error when ContainerProxy is not exported for R2 binding mounts', async () => {
