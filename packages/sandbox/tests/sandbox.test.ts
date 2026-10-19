@@ -10,6 +10,7 @@ import {
 } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 import { SessionInitInvalidatedError } from '../src/session-init';
+import type { MountInfo } from '../src/storage-mount/types';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -3945,6 +3946,41 @@ describe('Sandbox - Automatic Session Management', () => {
             c.includes('/mnt/late')
         )
       ).toBe(true);
+    });
+
+    it('keeps an existing mount when mounting the same path again fails validation', async () => {
+      mockMountScript({ exitCode: 0 });
+      await sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions);
+      const { activeMounts } = sandbox as unknown as {
+        activeMounts: Map<string, MountInfo>;
+      };
+      const existingMount = activeMounts.get('/mnt/data');
+      expect(existingMount?.mounted).toBe(true);
+
+      const issuedCommands: string[] = [];
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          issuedCommands.push(command);
+          return {
+            success: true,
+            command,
+            timestamp: new Date().toISOString(),
+            exitCode: 0,
+            stdout: '',
+            stderr: ''
+          } as any;
+        }
+      );
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).rejects.toThrow(/already in use/);
+
+      // The failed call must not tear down or forget the healthy mount.
+      expect(issuedCommands.some((c) => c.includes('fusermount -u'))).toBe(
+        false
+      );
+      expect(activeMounts.get('/mnt/data')).toBe(existingMount);
     });
   });
 });
