@@ -370,7 +370,7 @@ describe('Local Backup & Restore', () => {
       expect(result.localBucket).toBe(true);
     });
 
-    it('should pass validated excludes to createArchive unchanged', async () => {
+    it('should normalize globstar excludes before calling createArchive', async () => {
       vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
@@ -396,34 +396,7 @@ describe('Local Backup & Restore', () => {
       await sandbox.createBackup({
         dir: '/workspace/myapp',
         localBucket: true,
-        excludes: [
-          'node_modules',
-          'node_modules/',
-          'dist',
-          'dist/',
-          'dist/**',
-          '**/dist',
-          '**/dist/',
-          '**/dist/**',
-          '**/**/cache',
-          '**/tree/**',
-          'alpha/beta',
-          'alpha/beta/',
-          'packages/app/**',
-          'packages/foo/node_modules/',
-          'nested/path',
-          'nested/path/',
-          'a/b',
-          '.cache/foo/*/node_modules',
-          '*/*',
-          'a/*',
-          '?',
-          '?*?',
-          '*.log',
-          'logs/**.log',
-          'foo**/bar',
-          '...foo'
-        ]
+        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
       });
 
       expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
@@ -432,34 +405,7 @@ describe('Local Backup & Restore', () => {
         expect.any(String),
         {
           gitignore: false,
-          excludes: [
-            'node_modules',
-            'node_modules/',
-            'dist',
-            'dist/',
-            'dist/**',
-            '**/dist',
-            '**/dist/',
-            '**/dist/**',
-            '**/**/cache',
-            '**/tree/**',
-            'alpha/beta',
-            'alpha/beta/',
-            'packages/app/**',
-            'packages/foo/node_modules/',
-            'nested/path',
-            'nested/path/',
-            'a/b',
-            '.cache/foo/*/node_modules',
-            '*/*',
-            'a/*',
-            '?',
-            '?*?',
-            '*.log',
-            'logs/**.log',
-            'foo**/bar',
-            '...foo'
-          ],
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
             format: 'lz4',
             threads: 8

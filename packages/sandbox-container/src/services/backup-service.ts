@@ -2,8 +2,7 @@ import type { Logger } from '@repo/shared';
 import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import {
   BACKUP_ALLOWED_PREFIXES,
-  expandBackupExcludePattern,
-  getBackupExcludePatternError
+  normalizeBackupExcludePattern
 } from '@repo/shared/backup';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import { getRuntimeCertPEM } from '../cert';
@@ -16,8 +15,6 @@ export const BACKUP_WORK_DIR = '/var/backups';
 const BACKUP_MOUNTS_DIR = '/var/backups/mounts';
 const BACKUP_UPLOAD_TIMEOUT_MS = 1_800_000;
 const BACKUP_UPLOAD_MAX_ATTEMPTS = 3;
-const GIT_SKIP_SAMPLE_SIZE = 5;
-const GIT_SKIP_PATH_MAX_CHARS = 200;
 const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
 type BackupCompression = (typeof BACKUP_ALLOWED_COMPRESSIONS)[number];
 type BackupCreateCompressionOptions = {
@@ -80,14 +77,6 @@ function validateArchivePath(archivePath: string): string | null {
 
 function isBackupCompression(value: string): value is BackupCompression {
   return BACKUP_ALLOWED_COMPRESSIONS.includes(value as BackupCompression);
-}
-
-function canRepresentGitPathAsMksquashfsPattern(path: string): boolean {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: exclude files are line-delimited
-  const hasControlCharacters = /[\u0000-\u001f\u007f]/.test(path);
-  return (
-    !hasControlCharacters && path.trim() === path && !path.startsWith('... ')
-  );
 }
 
 interface CreateArchiveResult {
@@ -238,20 +227,33 @@ export class BackupService {
         ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
         : [];
 
-      const userExcludePatterns: string[] = [];
+      const normalizedExcludes: string[] = [];
       for (const pattern of excludes) {
-        const error = getBackupExcludePatternError(pattern);
-        if (error !== undefined) {
-          errorMessage = 'Invalid backup exclude pattern';
-          return serviceError({
-            message: `Invalid backup exclude pattern: ${error}`,
-            code: ErrorCode.INVALID_BACKUP_CONFIG,
-            details: { dir, archivePath }
-          });
+        const normalized = BackupService.normalizeMksquashfsPattern(pattern);
+        if (normalized === null) {
+          opLogger.warn(
+            'Exclude pattern reduced to empty after globstar normalization; skipping',
+            { original: pattern }
+          );
+          continue;
         }
-
-        userExcludePatterns.push(...expandBackupExcludePattern(pattern));
+        if (normalized !== pattern) {
+          opLogger.warn(
+            'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
+            { original: pattern, normalized }
+          );
+        }
+        normalizedExcludes.push(normalized);
       }
+
+      // A single-component pattern also gets the non-anchored "... " form so
+      // it matches at any depth. Patterns with a slash stay relative to the
+      // backup root: mksquashfs 4.5 applies "... a/b" to all of "a".
+      const userExcludePatterns = normalizedExcludes.flatMap((pattern) =>
+        pattern.replace(/\/+$/, '').includes('/')
+          ? [pattern]
+          : [pattern, `... ${pattern}`]
+      );
 
       const excludePatterns = [
         ...new Set([...gitignorePatterns, ...userExcludePatterns])
@@ -405,66 +407,43 @@ export class BackupService {
     }
 
     // Scope the query to the backup directory so Git returns ignored paths
-    // relative to the directory mksquashfs will archive. NUL delimiters retain
-    // valid pathname characters, and base64 carries them through line framing.
+    // relative to the directory mksquashfs will archive.
+    // Use core.quotePath=false to ensure special characters (spaces, unicode)
+    // are output literally rather than quoted, so they match archive entries.
     const ignoredFilesResult = await this.executeInternal(
       sessionId,
-      `set -o pipefail; git -C ${shellEscape(dir)} ls-files -z --others -i --exclude-standard -- . | base64 -w0`
+      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files --others -i --exclude-standard -- .`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
       return [];
     }
 
-    const relativePaths = Buffer.from(
-      ignoredFilesResult.data.stdout.trim(),
-      'base64'
-    )
-      .toString('utf8')
-      .split('\0')
-      .filter((path) => path.length > 0);
+    const relativePaths = ignoredFilesResult.data.stdout
+      .split('\n')
+      .map((line) => line.trim().replace(/\/+$/, ''))
+      .filter((line) => line.length > 0)
+      .map(BackupService.escapeMksquashfsWildcardLiteral);
 
-    // The mksquashfs exclude-file parser strips leading whitespace and gives a
-    // leading "... " special meaning. Control characters and surrounding
-    // whitespace are also unsupported by the backup exclude contract, so those
-    // paths remain in the backup.
-    const representablePaths = relativePaths.filter((path) =>
-      canRepresentGitPathAsMksquashfsPattern(path)
-    );
-    const skippedPaths = relativePaths.filter(
-      (path) => !canRepresentGitPathAsMksquashfsPattern(path)
-    );
-    if (skippedPaths.length > 0) {
-      opLogger.warn(
-        'Some gitignored paths cannot be represented safely; including them in the backup',
-        { count: skippedPaths.length }
-      );
-      const sample = skippedPaths
-        .slice(0, GIT_SKIP_SAMPLE_SIZE)
-        .map((path) =>
-          JSON.stringify(path.slice(0, GIT_SKIP_PATH_MAX_CHARS)).replaceAll(
-            '\u007f',
-            '\\u007f'
-          )
-        );
-      opLogger.debug('Sample of unrepresentable gitignored backup paths', {
-        sample,
-        omittedCount: skippedPaths.length - sample.length
-      });
-    }
-
-    // Git has already resolved ignore rules into concrete source-relative
-    // paths. Direct patterns retain that anchoring, including for one-component
-    // paths produced by root-anchored gitignore rules.
-    return [
-      ...new Set(
-        representablePaths.map(BackupService.escapeMksquashfsWildcardLiteral)
-      )
-    ];
+    // Git returns paths relative to the backup root, which is where
+    // mksquashfs anchors plain patterns. A non-anchored "... " form would
+    // also match unrelated paths, and mksquashfs 4.5 applies "... a/b" to
+    // all of "a".
+    return [...new Set(relativePaths)];
   }
 
   private static escapeMksquashfsWildcardLiteral(path: string): string {
     return path.replace(/\\/g, '\\\\').replace(/([*?[\]])/g, '\\$1');
+  }
+
+  /**
+   * Normalize a user-provided exclude pattern for mksquashfs compatibility.
+   * mksquashfs uses fnmatch-style wildcards which do not support ** (globstar).
+   * Leading and embedded ** components are dropped. Returns null if the
+   * pattern reduces to empty.
+   */
+  static normalizeMksquashfsPattern(pattern: string): string | null {
+    return normalizeBackupExcludePattern(pattern);
   }
 
   private async uploadPart(
