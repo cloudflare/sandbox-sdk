@@ -11,10 +11,19 @@ import type { RequestContext } from '../core/types';
 import type { ProcessService } from '../services/process-service';
 import { BaseHandler } from './base-handler';
 
+/**
+ * How often a quiet exec stream sends an SSE keepalive comment. It must stay
+ * well under the Bun server's idle timeout (255 s) and the SDK WebSocket
+ * transport's stream idle timeout (300 s by default).
+ */
+const STREAM_KEEPALIVE_INTERVAL_MS = 30_000;
+const KEEPALIVE_COMMENT = ': keepalive\n\n';
+
 export class ExecuteHandler extends BaseHandler<Request, Response> {
   constructor(
     private processService: ProcessService,
-    logger: Logger
+    logger: Logger,
+    private keepaliveIntervalMs = STREAM_KEEPALIVE_INTERVAL_MS
   ) {
     super(logger);
   }
@@ -117,6 +126,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {
       sessionId,
+      timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
       origin: body.origin
@@ -128,16 +138,19 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
 
     const process = processResult.data;
     const logger = this.logger;
+    const keepaliveIntervalMs = this.keepaliveIntervalMs;
 
     // Hoist listener references so cancel() can remove them
     let outputListener:
       | ((stream: 'stdout' | 'stderr', data: string) => void)
       | undefined;
     let statusListener: ((status: string) => void) | undefined;
+    let keepalive: ReturnType<typeof setInterval> | undefined;
 
     const cleanup = () => {
       if (outputListener) process.outputListeners.delete(outputListener);
       if (statusListener) process.statusListeners.delete(statusListener);
+      clearInterval(keepalive);
     };
 
     // Create SSE stream
@@ -220,6 +233,16 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
             }
           }
         };
+
+        // Keep a quiet command's stream alive until it completes or times out
+        keepalive = setInterval(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode(KEEPALIVE_COMMENT));
+          } catch {
+            // Stream was closed or cancelled
+            cleanup();
+          }
+        }, keepaliveIntervalMs);
 
         // Add listeners
         process.outputListeners.add(outputListener);

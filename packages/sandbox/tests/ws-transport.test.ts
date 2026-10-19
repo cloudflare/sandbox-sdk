@@ -634,6 +634,61 @@ describe('WebSocket Protocol Types', () => {
         vi.useRealTimers();
       }
     });
+
+    it('should keep a quiet stream alive on keepalive chunks without emitting them', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          streamIdleTimeoutMs: 100
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/execute/stream',
+          { command: 'sleep 600' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+        const [requestId] = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        const chunk = (data: string) =>
+          (transport as any).handleStreamChunk({
+            type: 'stream',
+            id: requestId,
+            data
+          });
+
+        chunk('{"type":"start"}');
+        const reader = (await streamPromise).getReader();
+        await reader.read();
+
+        // Keepalives arrive well inside each idle window
+        for (let i = 0; i < 5; i++) {
+          vi.advanceTimersByTime(80);
+          chunk('');
+        }
+        vi.advanceTimersByTime(80);
+        chunk('{"type":"complete"}');
+
+        const next = await reader.read();
+        expect(new TextDecoder().decode(next.value)).toBe(
+          'data: {"type":"complete"}\n\n'
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
 

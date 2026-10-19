@@ -350,6 +350,19 @@ export class WebSocketAdapter {
             return; // Connection dead, stop processing
           }
         }
+
+        // An SSE comment is a keepalive. Forward it as an empty chunk so the
+        // client's stream idle timer sees a quiet but live stream.
+        if (result.events.length === 0 && result.comments > 0) {
+          const keepalive: WSStreamChunk = {
+            type: 'stream',
+            id: requestId,
+            data: ''
+          };
+          if (!this.send(ws, keepalive)) {
+            return;
+          }
+        }
       }
 
       this.logger.debug('Completed streaming response handler', {

@@ -756,6 +756,11 @@ export class WebSocketTransport extends BaseTransport {
       this.resetStreamIdleTimeout(chunk.id, pending);
     }
 
+    // An empty chunk is a keepalive from a quiet stream; it carries no event
+    if (chunk.data === '' && chunk.event === undefined) {
+      return;
+    }
+
     // Buffer chunks if controller not set yet (race between onFirstChunk and enqueue)
     if (!pending.streamController) {
       if (!pending.bufferedChunks) {

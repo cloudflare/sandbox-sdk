@@ -267,6 +267,46 @@ describe('WebSocketAdapter', () => {
       expect(finalResponse.done).toBe(true);
     });
 
+    it('should forward SSE keepalive comments as empty stream chunks', async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'));
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
+          controller.close();
+        }
+      });
+      (mockRouter.route as any).mockResolvedValue(
+        new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
+
+      await adapter.onMessage(
+        mockWs as any,
+        JSON.stringify({
+          type: 'request',
+          id: 'req-quiet',
+          method: 'POST',
+          path: '/api/execute/stream',
+          body: { command: 'sleep 600' }
+        } satisfies WSRequest)
+      );
+      // Streaming runs in the background; wait for the final response
+      for (let i = 0; i < 100; i++) {
+        if (mockWs.getLastMessage<WSResponse>().type === 'response') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const chunks = mockWs
+        .getSentMessages<any>()
+        .filter((m) => m.type === 'stream')
+        .map((m) => m.data);
+      expect(chunks).toEqual(['{"type":"start"}', '', '{"type":"complete"}']);
+    });
+
     it('should ignore cancel from another connection for an active stream', async () => {
       const ownerWs = new MockServerWebSocket({ connectionId: 'owner-conn' });
       const otherWs = new MockServerWebSocket({ connectionId: 'other-conn' });
