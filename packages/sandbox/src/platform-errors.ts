@@ -120,6 +120,20 @@ export function isDurableObjectCodeUpdateReset(error: unknown): boolean {
 }
 
 /**
+ * Whether an error was raised because the Durable Object itself was reset, by
+ * a code update or a storage startup failure, rather than by the operation
+ * that observed it.
+ */
+export function isDurableObjectReset(error: unknown): boolean {
+  for (const candidate of selfAndCauses(error)) {
+    const message = errorMessageOf(candidate);
+    if (SUPERSEDED_ISOLATE_PATTERN.test(message)) return true;
+    if (DO_STORAGE_STARTUP_RESET_PATTERN.test(message)) return true;
+  }
+  return false;
+}
+
+/**
  * Whether an error represents a transient platform lifecycle/storage failure,
  * not an application-level sandbox failure.
  */

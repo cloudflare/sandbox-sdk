@@ -1,3 +1,5 @@
+import { isDurableObjectReset } from './platform-errors';
+
 export type PreviewTCPPort = {
   fetch(
     input: Request | string,
@@ -12,7 +14,8 @@ export type PreviewForwardingLifecycle = {
 
 export type PreviewForwardingResult =
   | { status: 'response'; response: Response }
-  | { status: 'network-lost' };
+  | { status: 'network-lost' }
+  | { status: 'failed'; error: unknown };
 
 export async function forwardPreviewRequest(
   tcpPort: PreviewTCPPort,
@@ -45,13 +48,16 @@ export async function forwardPreviewRequest(
     return { status: 'response', response };
   } catch (error) {
     settleForward();
+    // A reset of this Durable Object is a platform interruption, not a
+    // failure of the app behind the port.
+    if (isDurableObjectReset(error)) throw error;
     if (
       error instanceof Error &&
       error.message.includes('Network connection lost.')
     ) {
       return { status: 'network-lost' };
     }
-    throw error;
+    return { status: 'failed', error };
   }
 }
 
