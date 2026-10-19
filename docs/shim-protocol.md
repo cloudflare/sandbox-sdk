@@ -57,7 +57,7 @@ After a data or success frame, the package also requires exit code `0`. `package
 2. After success, it copies the file to stdout in 8 KiB reads. The package returns a `Response` whose body reads stdout, so the reader's pace applies backpressure to the shim.
 3. At end of file, the shim sends success on stderr. If a read fails partway, it sends a file error instead, and the package errors the response body with that `SandboxFileError` after the bytes that came before it.
 
-File bytes travel unframed, because Web Streams already provide ordering, backpressure, and end of stream. The package reads stderr while the body is being read, not only after stdout ends, because the container transport can carry both streams over one connection with shared backpressure.
+File bytes travel unframed, because Web Streams already provide ordering, backpressure, and end of stream. The container transport can carry both streams over one connection with shared backpressure, and it does not keep their bytes in the order the shim wrote them. File bytes can arrive before the opening frame or between its fragments, and stdout may not end until the terminal frame on stderr is read. So the package reads stdout while it waits for the opening frame, and reads stderr while the body is being read, not only after stdout ends. Once the opening frame is complete, stdout is read only as the body is read.
 
 ### `write`
 
