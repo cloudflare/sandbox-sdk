@@ -378,14 +378,13 @@ export class Session {
         throw new Error('Shell stdin is not available');
       }
 
-      // Race between:
-      // 1. Normal completion (exit code file appears)
-      // 2. Shell death (shell process exits unexpectedly)
-      // This allows us to detect shell termination (e.g., from 'exit' command) immediately
-      const exitCode = await Promise.race([
-        this.waitForExitCode(exitCodeFile, options?.timeoutMs),
-        shellExitedPromise
-      ]);
+      // Settles when the exit code file appears, or rejects as soon as the
+      // shell dies (e.g., from an 'exit' command).
+      const exitCode = await this.waitForExitCode(
+        exitCodeFile,
+        shellExitedPromise,
+        options?.timeoutMs
+      );
 
       // Read log file and parse prefixes
       const { stdout, stderr } = await this.parseLogFile(logFile);
@@ -1365,11 +1364,13 @@ export class Session {
    *   2. Polling every 50ms     → Reliable fallback
    *   3. Timeout (if configured)→ Prevents infinite hangs
    *   4. Initial existence check→ File may already exist
+   *   5. Shell exit             → Rejects; the file will never appear
    *
-   * Any mechanism that detects the file first wins (via `resolved` flag).
+   * Whichever settles first wins (via `resolved` flag) and stops the others.
    */
   private async waitForExitCode(
     exitCodeFile: string,
+    shellExited: Promise<never>,
     timeoutMs?: number
   ): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -1395,6 +1396,13 @@ export class Session {
         }
       });
 
+      // Bun's directory watcher opens and watches each entry when the
+      // directory changes. Other commands create and delete log files here
+      // constantly, so it emits ENOENT for entries that vanish mid-scan. An
+      // unhandled 'error' event would crash the server; polling still
+      // detects the exit code.
+      watcher.on('error', () => {});
+
       // STEP 2: Set up polling fallback (fs.watch can miss rename events on some filesystems)
       const pollInterval = setInterval(async () => {
         if (resolved) return;
@@ -1402,14 +1410,16 @@ export class Session {
         try {
           const exists = await Bun.file(exitCodeFile).exists();
           if (exists) {
+            const exitCode = await Bun.file(exitCodeFile).text();
+            if (resolved) return;
             resolved = true;
             watcher.close();
             clearInterval(pollInterval);
-            const exitCode = await Bun.file(exitCodeFile).text();
             resolve(parseInt(exitCode.trim(), 10));
           }
         } catch (error) {
-          // Ignore polling errors, watcher or next poll will catch it
+          // Ignore polling errors; the watcher, the next poll, or shell exit
+          // will settle the wait.
         }
       }, 50); // Poll every 50ms as fallback
 
@@ -1450,6 +1460,16 @@ export class Session {
             reject(error);
           }
         });
+
+      // STEP 5: Stop waiting when the shell dies; nothing will write the file
+      shellExited.catch((error) => {
+        if (!resolved) {
+          resolved = true;
+          watcher.close();
+          clearInterval(pollInterval);
+          reject(error);
+        }
+      });
     });
   }
 
