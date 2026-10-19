@@ -77,10 +77,11 @@ describe("Files.readFile", () => {
     expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
 
-  it("reads terminal control concurrently with stdout", async () => {
+  it("reads terminal control before stdout ends", async () => {
+    // A transport with shared backpressure ends stdout only after the terminal frame is read.
     const data = new Uint8Array([1, 2, 3]);
     let controlPull = 0;
-    let terminalRequested = false;
+    const terminalRequested = deferred<void>();
     const stderr = new ReadableStream<Uint8Array>(
       {
         pull(controller) {
@@ -89,19 +90,23 @@ describe("Files.readFile", () => {
             controller.enqueue(SUCCESS_HEADER);
             return;
           }
-          terminalRequested = true;
+          terminalRequested.resolve();
           controller.enqueue(SUCCESS_HEADER);
           controller.close();
         },
       },
       { highWaterMark: 0 },
     );
-    let terminalRequestedBeforeOutput = false;
+    let stdoutPulls = 0;
     const stdout = new ReadableStream<Uint8Array>(
       {
-        pull(controller) {
-          terminalRequestedBeforeOutput = terminalRequested;
-          controller.enqueue(data);
+        async pull(controller) {
+          stdoutPulls += 1;
+          if (stdoutPulls === 1) {
+            controller.enqueue(data);
+            return;
+          }
+          await terminalRequested.promise;
           controller.close();
         },
       },
@@ -111,8 +116,78 @@ describe("Files.readFile", () => {
     const response = await new Files(containerWith(process)).readFile("/file");
 
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
-    expect(terminalRequestedBeforeOutput).toBe(true);
     expect(process.kill).not.toHaveBeenCalled();
+  });
+
+  it("reads stdout while the opening frame is held behind file bytes", async () => {
+    // A transport with shared backpressure delivers the rest of the opening frame only after
+    // the file bytes queued ahead of it are read.
+    const chunks = [new Uint8Array([1, 2]), new Uint8Array([3])];
+    const stdoutDrained = deferred<void>();
+    let stdoutPulls = 0;
+    const stdout = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          const chunk = chunks[stdoutPulls];
+          stdoutPulls += 1;
+          if (chunk === undefined) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(chunk);
+          if (stdoutPulls === chunks.length) stdoutDrained.resolve();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    let stderrPulls = 0;
+    const stderr = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          stderrPulls += 1;
+          if (stderrPulls === 1) {
+            controller.enqueue(SUCCESS_HEADER.subarray(0, 6));
+            return;
+          }
+          await stdoutDrained.promise;
+          controller.enqueue(SUCCESS_HEADER.subarray(6));
+          controller.enqueue(SUCCESS_HEADER);
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const process = readProcess([], 0, stdout, stderr);
+    const response = await new Files(containerWith(process)).readFile("/file");
+
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(process.kill).not.toHaveBeenCalled();
+  });
+
+  it("reads stdout on demand once the opening frame arrives", async () => {
+    let stdoutPulls = 0;
+    const stdout = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          stdoutPulls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          controller.enqueue(new Uint8Array(8192));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const process = readProcess(
+      [SUCCESS_HEADER],
+      0,
+      stdout,
+      readableChunks([SUCCESS_HEADER], false),
+    );
+    const response = await new Files(containerWith(process)).readFile("/large");
+    const pullsWhenOpened = stdoutPulls;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(stdoutPulls).toBe(pullsWhenOpened);
+    await response.body?.cancel();
   });
 
   it("propagates native exec errors unchanged", async () => {
