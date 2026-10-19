@@ -3,7 +3,7 @@
 ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.1
 FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
 
-FROM node:24-alpine
+FROM node:26-alpine
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
 WORKDIR /workspace/app
 COPY app/package.json app/package-lock.json ./
