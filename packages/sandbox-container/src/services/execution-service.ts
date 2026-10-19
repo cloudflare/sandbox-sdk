@@ -313,7 +313,7 @@ export class ExecutionService {
       caughtError = error instanceof Error ? error : new Error(String(error));
 
       return serviceError({
-        message: `Failed to execute command '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${caughtError.message}`,
+        message: `Failed to execute command in ${SESSIONLESS_DISPLAY_NAME} execution: ${caughtError.message}`,
         code: ErrorCode.COMMAND_EXECUTION_ERROR,
         details: {
           command,
@@ -324,7 +324,6 @@ export class ExecutionService {
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome,
-        command,
         exitCode,
         durationMs: Date.now() - startTime,
         sessionId: SESSIONLESS_DISPLAY_NAME,
@@ -380,7 +379,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to execute streaming command '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
+        message: `Failed to execute streaming command in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
         code: ErrorCode.STREAM_START_ERROR,
         details: {
           command,

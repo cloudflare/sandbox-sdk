@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   redactCommand,
   redactCredentials,
-  redactSensitiveParams,
-  truncateForLog
+  redactSensitiveParams
 } from '../../src/logger/sanitize';
 
 describe('redactCredentials', () => {
@@ -101,24 +100,5 @@ describe('redactCommand', () => {
   it('passes safe commands through unchanged', () => {
     expect(redactCommand('ls -la /tmp')).toBe('ls -la /tmp');
     expect(redactCommand('echo hello')).toBe('echo hello');
-  });
-});
-
-describe('truncateForLog', () => {
-  it('passes strings within limit unchanged', () => {
-    expect(truncateForLog('hello')).toEqual({
-      value: 'hello',
-      truncated: false
-    });
-    expect(truncateForLog('a'.repeat(120))).toEqual({
-      value: 'a'.repeat(120),
-      truncated: false
-    });
-  });
-
-  it('truncates long strings and sets truncated flag', () => {
-    const result = truncateForLog('a'.repeat(200));
-    expect(result.truncated).toBe(true);
-    expect(result.value.length).toBeLessThanOrEqual(121); // 120 + ellipsis char
   });
 });

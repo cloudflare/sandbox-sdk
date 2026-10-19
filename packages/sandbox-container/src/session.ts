@@ -96,11 +96,7 @@ import { link, mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
-import {
-  createNoOpLogger,
-  logCanonicalEvent,
-  redactCommand
-} from '@repo/shared';
+import { createNoOpLogger, logCanonicalEvent } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -122,7 +118,6 @@ interface ExecState {
   exitCode?: number;
   stdoutLen?: number;
   stderrLen?: number;
-  stderrPreview?: string;
   errorMessage?: string;
   /** exec-specific: timeout requested for this command */
   timeout?: number;
@@ -407,8 +402,6 @@ export class Session {
       state.durationMs = duration;
       state.stdoutLen = stdout.length;
       state.stderrLen = stderr.length;
-      state.stderrPreview =
-        stderr.length > 0 ? stderr.substring(0, 200) : undefined;
       state.outcome = 'success';
 
       return {
@@ -428,20 +421,15 @@ export class Session {
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
     } finally {
-      const stderrPreview = state.stderrPreview
-        ? redactCommand(state.stderrPreview)
-        : undefined;
       logCanonicalEvent(this.logger, {
         event: 'command.exec',
         outcome: state.outcome ?? 'error',
         durationMs: state.durationMs ?? Date.now() - startTime,
-        command,
         sessionId: this.id,
         commandId,
         exitCode: state.exitCode,
         stdoutLen: state.stdoutLen,
         stderrLen: state.stderrLen,
-        stderrPreview,
         origin: state.origin,
         errorMessage: state.errorMessage,
         error: caughtError
@@ -696,7 +684,6 @@ export class Session {
         event: 'command.stream',
         outcome: state.outcome ?? 'error',
         durationMs: state.durationMs ?? Date.now() - startTime,
-        command,
         sessionId: this.id,
         commandId,
         exitCode: state.exitCode,
