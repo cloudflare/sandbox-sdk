@@ -64,6 +64,13 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BACKUP_CREATE_FAILED]: 500,
   [ErrorCode.BACKUP_RESTORE_FAILED]: 500,
 
+  // Tunnel errors
+  [ErrorCode.TUNNEL_NOT_FOUND]: 404,
+  [ErrorCode.TUNNEL_ALREADY_RUNNING]: 409,
+  [ErrorCode.TUNNEL_RUN_CONFLICT]: 409,
+  [ErrorCode.TUNNEL_START_ERROR]: 500,
+  [ErrorCode.CLOUDFLARED_NOT_FOUND]: 501,
+
   // 501 Not Implemented (feature not available in image variant)
   [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
   [ErrorCode.JAVASCRIPT_NOT_AVAILABLE]: 501,

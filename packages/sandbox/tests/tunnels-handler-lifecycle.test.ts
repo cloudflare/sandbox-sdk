@@ -9,8 +9,9 @@ import type {
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
-import { ErrorCode, RPCTransportError } from '../src/errors';
+import { ErrorCode, RPCTransportError, SandboxError } from '../src/errors';
 import {
+  createPortLock,
   createTunnelsHandler,
   pruneTunnelsForRestart,
   type TunnelsStorage
@@ -150,6 +151,19 @@ function createDisposedRPCError(): RPCTransportError {
   });
 }
 
+function createRunConflictError(
+  context: { activeRunId: string; activeTunnelId?: string },
+  port = 8080
+): SandboxError {
+  return new SandboxError({
+    code: ErrorCode.TUNNEL_RUN_CONFLICT,
+    message: `Port ${port} already active under run ${context.activeRunId}`,
+    httpStatus: 409,
+    context: { runId: 'run-new', port, ...context },
+    timestamp: '2026-05-13T00:00:00.000Z'
+  });
+}
+
 function makeHandler() {
   const { client } = makeClient();
   const storage = makeStorage();
@@ -262,8 +276,14 @@ describe('tunnels handler > quick lifecycle recovery', () => {
     const info = await handler.get(8080);
 
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
     const secondRunId = client.tunnels.ensureTunnelRun.mock.calls[1][0].runId;
     expect(info.hostname).toBe(`${secondRunId}.trycloudflare.com`);
+    // The discarded run would otherwise keep holding the port.
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: first.tunnelId,
+      runId: first.runId
+    });
     const stored = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(stored?.['8080']).toEqual(info);
   });
@@ -349,6 +369,7 @@ describe('tunnels handler > quick lifecycle recovery', () => {
       port: 8080
     });
     expect(info.hostname).toBe(`${first.runId}.trycloudflare.com`);
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent quick tunnel gets across response-loss recovery', async () => {
@@ -463,6 +484,123 @@ describe('tunnels handler > quick lifecycle recovery', () => {
     expect(await storage.get<Record<string, TunnelInfo>>('tunnels')).toEqual(
       {}
     );
+    const started = client.tunnels.ensureTunnelRun.mock.calls.map(
+      ([request]) => ({ tunnelId: request.tunnelId, runId: request.runId })
+    );
+    const stopped = client.tunnels.stopTunnelRun.mock.calls.map(
+      ([request]) => request
+    );
+    expect(stopped).toEqual(started);
+  });
+
+  it('stops an orphaned run holding the port and starts a new one', async () => {
+    const { client, storage, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun
+      .mockRejectedValueOnce(
+        createRunConflictError({
+          activeRunId: 'run-orphan',
+          activeTunnelId: 'quick-orphan'
+        })
+      )
+      .mockImplementationOnce(async (request) => ({
+        started: true,
+        run: {
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          mode: 'quick',
+          port: request.port,
+          url: 'https://fresh.trycloudflare.com',
+          hostname: 'fresh.trycloudflare.com',
+          startedAt: '2026-05-13T00:00:00.000Z'
+        }
+      }));
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: 'quick-orphan',
+      runId: 'run-orphan'
+    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    expect(info.hostname).toBe('fresh.trycloudflare.com');
+    const stored = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(stored?.['8080']).toEqual(info);
+  });
+
+  it('does not stop its own run on a conflict', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
+      throw createRunConflictError({
+        activeRunId: request.runId,
+        activeTunnelId: request.tunnelId
+      });
+    });
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      code: ErrorCode.TUNNEL_RUN_CONFLICT
+    });
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
+  });
+
+  it('serializes a port across handlers that share a lock', async () => {
+    // The Sandbox rebuilds its handler on a transport switch while the old
+    // handler's get() may still be running. The rebuilt handler must wait
+    // and reuse that run rather than start a second one or stop it.
+    const { client } = makeClient();
+    const storage = makeStorage();
+    const withPortLock = createPortLock();
+    const build = () =>
+      createTunnelsHandler({
+        client: client as unknown as Parameters<
+          typeof createTunnelsHandler
+        >[0]['client'],
+        storage,
+        logger: makeLogger(),
+        ...makeRuntimeFences(),
+        withPortLock
+      } as unknown as Parameters<typeof createTunnelsHandler>[0]).tunnels;
+    const firstAdmission = Promise.withResolvers<void>();
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
+      await firstAdmission.promise;
+      return {
+        started: true,
+        run: {
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          mode: 'quick',
+          port: request.port,
+          url: 'https://first.trycloudflare.com',
+          hostname: 'first.trycloudflare.com',
+          startedAt: '2026-05-13T00:00:00.000Z'
+        }
+      };
+    });
+
+    const firstGet = build().get(8080);
+    await vi.waitFor(() => {
+      expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    });
+    const secondGet = build().get(8080);
+    firstAdmission.resolve();
+
+    const [first, second] = await Promise.all([firstGet, secondGet]);
+    expect(second).toEqual(first);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a port conflict from an older container without retrying', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun.mockRejectedValue(
+      createRunConflictError({ activeRunId: 'run-orphan' })
+    );
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      code: ErrorCode.TUNNEL_RUN_CONFLICT,
+      message: 'Port 8080 already active under run run-orphan'
+    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
   });
 });
 

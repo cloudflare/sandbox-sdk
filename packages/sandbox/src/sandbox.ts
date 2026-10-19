@@ -162,6 +162,7 @@ import type {
 import { resolveAccountId, resolveZoneId } from './tunnels/credentials';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
+  createPortLock,
   createTunnelsHandler,
   pruneTunnelsForRestart,
   type TunnelExitHandler,
@@ -1028,6 +1029,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // sandbox.destroy(). Stored separately so the public `tunnels` getter
   // stays narrow (users don't see destroyAll).
   private destroyAllTunnels: (() => Promise<void>) | null = null;
+  // Shared by every tunnels handler this DO builds, so a handler rebuilt
+  // after a transport swap waits for operations the old one started.
+  private readonly tunnelPortLock = createPortLock();
   // capnweb localMain exposed to the container side of the RPC
   // session. Constructed once in the constructor (the lazy accessor
   // keeps it pointing at the current `tunnelExitHandler` even as
@@ -5508,6 +5512,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sandboxId: this.ctx.id.toString(),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime,
+      withPortLock: this.tunnelPortLock,
       getNamedTunnelConfig: async () => {
         const envObj = this.env as Record<string, unknown>;
         const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');
