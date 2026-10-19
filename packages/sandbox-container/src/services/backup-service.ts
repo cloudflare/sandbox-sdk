@@ -19,7 +19,11 @@ export class BackupService {
   private restoreOperations: RestoreOperations;
   private transferOperations: TransferOperations;
 
-  constructor(logger: Logger, commandContextService: CommandContextService) {
+  constructor(
+    logger: Logger,
+    commandContextService: CommandContextService,
+    runtimeCertPEM?: () => string | undefined
+  ) {
     this.archiveOperations = new ArchiveOperations(
       logger,
       commandContextService
@@ -30,7 +34,8 @@ export class BackupService {
     );
     this.transferOperations = new TransferOperations(
       logger,
-      commandContextService
+      commandContextService,
+      runtimeCertPEM
     );
   }
 

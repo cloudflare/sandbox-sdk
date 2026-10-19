@@ -14,6 +14,12 @@ const SYSTEM_CA_BUNDLE_PATHS = [
 const CERT_WAIT_TIMEOUT_MS = 5000;
 const CERT_WAIT_POLL_MS = 100;
 
+let runtimeCertPEM: string | undefined;
+
+export function getRuntimeCertPEM(): string | undefined {
+  return runtimeCertPEM;
+}
+
 function findSystemBundle(): string | undefined {
   return SYSTEM_CA_BUNDLE_PATHS.find((bundlePath) => existsSync(bundlePath));
 }
@@ -30,6 +36,7 @@ async function waitForCertFile(certPath: string): Promise<boolean> {
 }
 
 export async function trustRuntimeCert(): Promise<void> {
+  runtimeCertPEM = undefined;
   // Default to the Cloudflare containers injected CA certificate
   const certPath =
     process.env.SANDBOX_CA_CERT ||
@@ -52,6 +59,7 @@ export async function trustRuntimeCert(): Promise<void> {
     process.exit(1);
   }
 
+  runtimeCertPEM = certContent;
   process.env.NODE_EXTRA_CA_CERTS = certPath;
 
   const systemBundlePath = findSystemBundle();

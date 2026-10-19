@@ -549,6 +549,20 @@ function isBucketRootProbe(
   );
 }
 
+function isBucketRootMutation(
+  request: Request,
+  realPath: string,
+  bucket: string
+): boolean {
+  const method = request.method.toUpperCase();
+  return (
+    method !== 'GET' &&
+    method !== 'HEAD' &&
+    method !== 'OPTIONS' &&
+    getObjectKeyForPath(realPath, bucket) === ''
+  );
+}
+
 function deleteDirectoryMarkerCacheEntry(
   mountId: string,
   realPath: string
@@ -789,6 +803,9 @@ export const s3CredentialProxyHandler: OutboundHandler<
   const realUrl = new URL(realPath + (url.search || ''), mount.endpoint);
   if (isBucketRootProbe(request, realPath, url, mount.bucket)) {
     return new Response(null, { status: 200 });
+  }
+  if (isBucketRootMutation(request, realPath, mount.bucket)) {
+    return new Response('Method Not Allowed', { status: 405 });
   }
   if (!isRequestWithinMountScope(realPath, url, mount.bucket, mount.prefix)) {
     return new Response('Forbidden: request is outside mounted bucket scope', {
