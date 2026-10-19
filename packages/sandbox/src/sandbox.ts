@@ -2609,17 +2609,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Create s3fs ahbe_conf file that suppresses the Expect: 100-continue header.
-   * Restricted to 0600 so s3fs will accept it (same requirement as passwd files).
    */
   private async createDisableExpectHeaderFile(
     headerFilePath: string
   ): Promise<void> {
-    await this.client.files.writeFile(
+    await this.writeOwnerOnlyFile(
       headerFilePath,
-      S3FS_DISABLE_EXPECT_HEADER_CONFIG,
-      DISABLE_SESSION_TOKEN
+      S3FS_DISABLE_EXPECT_HEADER_CONFIG
     );
-    await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
   }
 
   /**
@@ -2632,14 +2629,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     credentials: BucketCredentials
   ): Promise<void> {
     const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
+    await this.writeOwnerOnlyFile(passwordFilePath, content);
+  }
 
-    await this.client.files.writeFile(
-      passwordFilePath,
-      content,
-      DISABLE_SESSION_TOKEN
-    );
-
-    await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+  /**
+   * s3fs refuses support files that other users can read. Create them with
+   * mode 0600 so the password file is never readable while it is being
+   * written, and still chmod for containers that predate `ownerOnly` and
+   * ignore it.
+   */
+  private async writeOwnerOnlyFile(
+    path: string,
+    content: string
+  ): Promise<void> {
+    await this.client.files.writeFile(path, content, DISABLE_SESSION_TOKEN, {
+      ownerOnly: true
+    });
+    await this.execInternal(`chmod 0600 ${shellEscape(path)}`);
   }
 
   /**

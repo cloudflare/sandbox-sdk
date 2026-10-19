@@ -162,8 +162,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const body = await this.parseRequestBody<WriteFileRequest>(request);
 
-    const options =
-      body.encoding !== undefined ? { encoding: body.encoding } : {};
+    const options = {
+      ...(body.encoding !== undefined && { encoding: body.encoding }),
+      ...(body.ownerOnly === true && { ownerOnly: true })
+    };
 
     const result = await this.fileService.writeFile(
       body.path,

@@ -167,6 +167,26 @@ describe('FileClient', () => {
       expect(result.path).toBe('/app/image.png');
     });
 
+    it('sends ownerOnly in the write request', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            path: '/tmp/secret',
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
+
+      await client.writeFile('/tmp/secret', 'content', 'session-write', {
+        ownerOnly: true
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body).toMatchObject({ path: '/tmp/secret', ownerOnly: true });
+    });
+
     it('should handle write permission errors', async () => {
       const errorResponse = {
         error: 'Permission denied: cannot write to /system/readonly.txt',

@@ -361,7 +361,7 @@ class FilesRPCAPI extends RpcTarget {
     path: string,
     content: string,
     sessionId: string,
-    options?: { encoding?: string; permissions?: string }
+    options?: { encoding?: string; ownerOnly?: boolean }
   ) {
     const result = await this.#svc.writeFile(path, content, options, sessionId);
     throwIfError(result);

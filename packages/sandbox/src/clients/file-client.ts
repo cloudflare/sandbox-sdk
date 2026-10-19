@@ -30,6 +30,7 @@ export interface WriteFileRequest extends SessionRequest {
   path: string;
   content: string;
   encoding?: string;
+  ownerOnly?: boolean;
 }
 
 /**
@@ -79,19 +80,20 @@ export class FileClient extends BaseHttpClient implements SandboxFilesAPI {
    * @param path - File path to write to
    * @param content - Content to write
    * @param sessionId - The session ID for this operation
-   * @param options - Optional settings (encoding)
+   * @param options - Optional settings (encoding, ownerOnly)
    */
   async writeFile(
     path: string,
     content: string,
     sessionId: string,
-    options?: { encoding?: string }
+    options?: { encoding?: string; ownerOnly?: boolean }
   ): Promise<WriteFileResult> {
-    const data = {
+    const data: WriteFileRequest = {
       path,
       content,
       sessionId,
-      encoding: options?.encoding
+      encoding: options?.encoding,
+      ...(options?.ownerOnly === true && { ownerOnly: true })
     };
 
     const response = await this.post<WriteFileResult>('/api/write', data);
