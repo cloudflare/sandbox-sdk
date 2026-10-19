@@ -3713,6 +3713,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (result.status === 'failed') {
+      if (!(await this.currentRuntime.isActive(runtime))) {
+        return this.stalePreviewURLResponse();
+      }
+
+      // A failure on the container port, such as a closed connection or no
+      // listener, belongs to the app behind the preview. Answer here, as a
+      // reverse proxy does, so the Worker does not report it as a platform
+      // interruption and the original error is still logged.
+      this.logger.error(
+        'Preview request to container port failed',
+        result.error instanceof Error
+          ? result.error
+          : new Error(String(result.error)),
+        { port, method: request.method }
+      );
+      return new Response(`Could not reach port ${port} in the container`, {
+        status: 502
+      });
+    }
+
     return result.response;
   }
 

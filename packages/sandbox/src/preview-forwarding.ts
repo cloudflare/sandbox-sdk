@@ -12,7 +12,8 @@ export type PreviewForwardingLifecycle = {
 
 export type PreviewForwardingResult =
   | { status: 'response'; response: Response }
-  | { status: 'network-lost' };
+  | { status: 'network-lost' }
+  | { status: 'failed'; error: unknown };
 
 export async function forwardPreviewRequest(
   tcpPort: PreviewTCPPort,
@@ -51,7 +52,7 @@ export async function forwardPreviewRequest(
     ) {
       return { status: 'network-lost' };
     }
-    throw error;
+    return { status: 'failed', error };
   }
 }
 

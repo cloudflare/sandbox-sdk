@@ -77,17 +77,18 @@ describe('forwardPreviewRequest', () => {
     expect(settle).toHaveBeenCalledTimes(1);
   });
 
-  it('settles and rethrows generic errors', async () => {
+  it('returns other container port errors as failed', async () => {
     const { lifecycle, settle } = createLifecycle();
-    const tcpFetch = vi.fn().mockRejectedValue(new Error('boom'));
+    const error = new Error('Container port connection closed unexpectedly.');
+    const tcpFetch = vi.fn().mockRejectedValue(error);
 
-    await expect(
-      forwardPreviewRequest(
-        { fetch: tcpFetch },
-        new Request('http://localhost:8080/'),
-        lifecycle
-      )
-    ).rejects.toThrow('boom');
+    const result = await forwardPreviewRequest(
+      { fetch: tcpFetch },
+      new Request('http://localhost:8080/'),
+      lifecycle
+    );
+
+    expect(result).toEqual({ status: 'failed', error });
     expect(settle).toHaveBeenCalledTimes(1);
   });
 
