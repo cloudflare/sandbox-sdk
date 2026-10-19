@@ -5,20 +5,20 @@ ARG NODE_VERSION=24
 # cloudflared release — shared across glibc and musl image variants.
 # Bump this together with the architecture-specific checksums below.
 ARG CLOUDFLARED_VERSION=2026.3.0
+# fuse-overlayfs release — backs the copy-on-write layer of restored backups.
+# Pinned upstream because Ubuntu 22.04 ships 1.7.1, which returns EEXIST when
+# a restored directory is deleted, recreated and listed before files are
+# created in it (fixed in 1.15). Switch back to the distro package once the
+# base image ships 1.15 or newer.
+# Bump this together with the architecture-specific checksums below.
+ARG FUSE_OVERLAYFS_VERSION=1.18
 FROM oven/bun:${BUN_VERSION} AS bun-binary
 FROM node:${NODE_VERSION}-slim AS node-runtime
 
 # ============================================================================
-# cloudflared (Cloudflare Tunnel daemon) — enables sandbox.tunnels.*
-# Version pin lives at the top of this Dockerfile as a global ARG, shared
-# by every image variant so they ship the same release.
+# Release downloader — shared base for fetching pinned upstream binaries
 # ============================================================================
-FROM alpine:3.21 AS cloudflared-binary
-
-ARG TARGETARCH
-ARG CLOUDFLARED_VERSION
-ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
-ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
+FROM alpine:3.21 AS release-downloader
 
 # Inject the host's extra CA bundle when downloading behind a TLS-intercepting
 # proxy (e.g. Cloudflare WARP / Zero Trust). No-op when the secret isn't passed.
@@ -32,6 +32,18 @@ RUN --mount=type=secret,id=wrangler_ca \
     if [ -f /usr/local/share/ca-certificates/wrangler-dev-ca.crt ]; then \
         update-ca-certificates; \
     fi
+
+# ============================================================================
+# cloudflared (Cloudflare Tunnel daemon) — enables sandbox.tunnels.*
+# Version pin lives at the top of this Dockerfile as a global ARG, shared
+# by every image variant so they ship the same release.
+# ============================================================================
+FROM release-downloader AS cloudflared-binary
+
+ARG TARGETARCH
+ARG CLOUDFLARED_VERSION
+ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
+ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
 
 RUN set -eux; \
     arch="${TARGETARCH:-}"; \
@@ -48,6 +60,32 @@ RUN set -eux; \
     echo "$sha  /cloudflared" | sha256sum -c -; \
     chmod +x /cloudflared; \
     /cloudflared --version
+
+# ============================================================================
+# fuse-overlayfs — statically linked upstream release for the glibc images
+# ============================================================================
+FROM release-downloader AS fuse-overlayfs-binary
+
+ARG TARGETARCH
+ARG FUSE_OVERLAYFS_VERSION
+ARG FUSE_OVERLAYFS_SHA256_AMD64=56b0ae0aeb8abb308b068af2f137ed8d1bd239f4f27e21672ff0def861eea1e8
+ARG FUSE_OVERLAYFS_SHA256_ARM64=82fed736197b2a881a822e5357b488796f654e8371ce8573a1592331510a0133
+
+RUN set -eux; \
+    arch="${TARGETARCH:-}"; \
+    if [ -z "$arch" ]; then \
+      arch="$(apk --print-arch)"; \
+    fi; \
+    case "$arch" in \
+      amd64|x86_64) suffix=x86_64; sha="${FUSE_OVERLAYFS_SHA256_AMD64}" ;; \
+      arm64|aarch64) suffix=aarch64; sha="${FUSE_OVERLAYFS_SHA256_ARM64}" ;; \
+      *) echo "Unsupported arch for fuse-overlayfs: $arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/containers/fuse-overlayfs/releases/download/v${FUSE_OVERLAYFS_VERSION}/fuse-overlayfs-${suffix}"; \
+    curl -fsSL -o /fuse-overlayfs "$url"; \
+    echo "$sha  /fuse-overlayfs" | sha256sum -c -; \
+    chmod +x /fuse-overlayfs; \
+    /fuse-overlayfs --version
 
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
@@ -152,7 +190,6 @@ ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 # - fuse3: FUSE filesystem support (replaces legacy fuse, needed by s3fs/squashfuse/fuse-overlayfs)
 # - squashfs-tools: create squashfs archives (mksquashfs)
 # - squashfuse: mount squashfs in userspace (FUSE)
-# - fuse-overlayfs: userspace overlayfs for copy-on-write snapshots
 # Cache-bust: 2 - Clear apt cache to force fresh package list
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -160,7 +197,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/* && \
     apt-get update && apt-get install -y --no-install-recommends \
-    s3fs fuse3 squashfs-tools squashfuse fuse-overlayfs \
+    s3fs fuse3 squashfs-tools squashfuse \
     ca-certificates curl wget procps git unzip zip jq file \
     inotify-tools \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
@@ -172,6 +209,10 @@ RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
 # fusermount requires /etc/mtab to locate active mounts
 RUN ln -sf /proc/mounts /etc/mtab
+
+# Userspace overlayfs for copy-on-write backup restores
+COPY --from=fuse-overlayfs-binary /fuse-overlayfs /usr/bin/fuse-overlayfs
+RUN fuse-overlayfs --version
 
 # Install Node.js from official Node image (defaults to 24 LTS,
 # override via --build-arg NODE_VERSION=<version>)

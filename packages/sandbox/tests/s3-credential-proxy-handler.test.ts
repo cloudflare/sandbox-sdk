@@ -445,9 +445,118 @@ describe('s3CredentialProxyHandler mount scope enforcement', () => {
     vi.restoreAllMocks();
   });
 
-  it('allows bucket root probes for prefixed mounts without forwarding upstream', async () => {
+  it.each(['GET', 'HEAD'])(
+    'allows %s bucket root probes for prefixed mounts without forwarding upstream',
+    async (method) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`, method);
+
+      const res = await s3CredentialProxyHandler(
+        req,
+        {} as Cloudflare.Env,
+        makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+          typeof s3CredentialProxyHandler
+        >[2]
+      );
+
+      expect(res.status).toBe(200);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      vi.restoreAllMocks();
+    }
+  );
+
+  it.each(['DELETE', 'PUT', 'POST', 'PATCH'])(
+    'rejects %s bucket root mutations without forwarding upstream',
+    async (method) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`, method);
+
+      const res = await s3CredentialProxyHandler(
+        req,
+        {} as Cloudflare.Env,
+        makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+          typeof s3CredentialProxyHandler
+        >[2]
+      );
+
+      expect(res.status).toBe(405);
+      expect(await res.text()).toBe('Method Not Allowed');
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      vi.restoreAllMocks();
+    }
+  );
+
+  it('rejects bucket root mutations with an allowed prefix query', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`);
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/?prefix=project-a%2F`,
+      'DELETE'
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(405);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects bucket root mutations for unprefixed mounts', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`, 'DELETE');
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams()) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(res.status).toBe(405);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['PUT', 'project-a/file.txt'],
+    ['POST', 'project-a/file.txt?uploads'],
+    ['DELETE', 'project-a/file.txt']
+  ])(
+    'allows object-level %s requests inside the prefix',
+    async (method, path) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+      const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/${path}`, method);
+
+      const res = await s3CredentialProxyHandler(
+        req,
+        {} as Cloudflare.Env,
+        makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+          typeof s3CredentialProxyHandler
+        >[2]
+      );
+
+      expect(res.status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+
+      vi.restoreAllMocks();
+    }
+  );
+
+  it('allows bucket root OPTIONS requests', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`, 'OPTIONS');
 
     const res = await s3CredentialProxyHandler(
       req,
@@ -458,7 +567,7 @@ describe('s3CredentialProxyHandler mount scope enforcement', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
 
     vi.restoreAllMocks();
   });

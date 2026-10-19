@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.12.9
+FROM docker.io/cloudflare/sandbox:0.12.10
 
 # Install the Codex CLI globally
 RUN npm install -g @openai/codex
