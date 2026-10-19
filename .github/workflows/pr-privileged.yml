@@ -149,7 +149,7 @@ jobs:
           persist-credentials: false
 
       # No dependency cache: a cache written here would be shared with trusted runs.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
