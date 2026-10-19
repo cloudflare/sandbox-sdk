@@ -22,6 +22,7 @@ export {
 export {
   CONTAINER_PROXY_CLASS_NAME,
   ContainerProxy,
+  installSDKOutboundHandlers,
   type OutboundHandlerRegistry,
   S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST,
   S3_CREDENTIAL_PROXY_HOST

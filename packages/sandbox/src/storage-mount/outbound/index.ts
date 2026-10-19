@@ -7,7 +7,6 @@ import { InvalidMountConfigError } from '../errors';
 import type { S3CredentialProxyParams } from '../types';
 import {
   CONTAINER_PROXY_CLASS_NAME,
-  installSDKOutboundHandlers,
   S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST,
   S3_CREDENTIAL_PROXY_HOST
 } from './container-proxy';
@@ -41,7 +40,6 @@ export type EgressContainerState = DurableObjectState<{}> & {
 
 export interface MountOutboundHost {
   ctx: EgressContainerState;
-  constructorRef: Function;
   enableInternet?: boolean;
   logger: Logger;
   setOutboundByHost<T>(host: string, method: string, params: T): Promise<void>;
@@ -73,7 +71,6 @@ export async function configureR2EgressOutbound(
     );
   }
 
-  installSDKOutboundHandlers(host.constructorRef);
   if (Object.keys(params.buckets).length > 0) {
     await host.setOutboundByHost<R2EgressParams>(
       'r2.internal',
@@ -128,8 +125,6 @@ export async function configureGitAuthInterceptor(
     );
   }
 
-  installSDKOutboundHandlers(host.constructorRef);
-
   const hostOverrides: Record<
     string,
     { method: string; params: GitAuthInterceptorParams }
@@ -180,7 +175,6 @@ export async function configureS3CredentialProxyOutbound(
 
   const hosts = [S3_CREDENTIAL_PROXY_HOST, S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST];
 
-  installSDKOutboundHandlers(host.constructorRef);
   if (Object.keys(params.mounts).length > 0) {
     for (const outboundHost of hosts) {
       await host.setOutboundByHost<S3CredentialProxyParams>(

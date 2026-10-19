@@ -110,6 +110,7 @@ import {
   ContainerProxy,
   configureGitAuthInterceptor,
   type EgressContainerState,
+  installSDKOutboundHandlers,
   type MountOutboundHost
 } from './storage-mount';
 import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
@@ -1198,6 +1199,16 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
+    // The base constructor restores persisted outbound overrides and drops any
+    // whose method is not registered for the concrete class. Register the SDK
+    // handlers first so bucket mounts and git auth keep their egress routes
+    // when the Durable Object restarts under a running container. Registered
+    // handlers also make the base class apply and persist outbound
+    // interception, which needs the ContainerProxy export these features
+    // already require.
+    if ((ctx as EgressContainerState).exports?.ContainerProxy) {
+      installSDKOutboundHandlers(new.target);
+    }
     super(ctx, env);
 
     const envObj = env as Record<string, unknown>;
@@ -3217,7 +3228,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private getMountOutboundHost(): MountOutboundHost {
     return {
       ctx: this.ctx as EgressContainerState,
-      constructorRef: this.constructor,
       enableInternet: this.enableInternet,
       logger: this.logger,
       setOutboundByHost: (host, method, params) =>

@@ -45,7 +45,6 @@ function createOutboundHost(logger: Logger): MountOutboundHost {
         interceptOutboundHttp: vi.fn(async () => undefined)
       }
     } as unknown as MountOutboundHost['ctx'],
-    constructorRef: function TestContainer() {},
     logger,
     setOutboundByHost: vi.fn(async () => undefined),
     removeOutboundByHost: vi.fn(async () => undefined)
