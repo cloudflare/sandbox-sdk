@@ -290,6 +290,40 @@ describe('LocalMountSyncManager', () => {
     });
   });
 
+  describe('container watch reconnects', () => {
+    async function startWithFailingWatch(error: Error) {
+      const watchClient = { watch: vi.fn().mockRejectedValue(error) };
+      const manager = new LocalMountSyncManager({
+        bucket: createMockR2Bucket(new Map()) as unknown as R2Bucket,
+        mountPath: '/data',
+        prefix: undefined,
+        readOnly: false,
+        client: createMockSandboxClient(createMockFileClient(), watchClient),
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+      await manager.start();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await manager.stop();
+      return watchClient.watch;
+    }
+
+    it('should stop after the container rejects the watch path', async () => {
+      const rejected = Object.assign(
+        new Error('path must be inside /workspace'),
+        { code: 'PERMISSION_DENIED' }
+      );
+      expect(await startWithFailingWatch(rejected)).toHaveBeenCalledTimes(1);
+    });
+
+    it('should keep retrying transient failures', async () => {
+      const transient = new Error('connection reset');
+      const watch = await startWithFailingWatch(transient);
+      expect(watch.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
   describe('R2 poll diff detection', () => {
     it('should detect new objects on poll', async () => {
       const r2Objects = new Map<string, { body: string; etag: string }>();
