@@ -568,6 +568,86 @@ describe('Backup Workflow E2E', () => {
 
       await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);
+
+    test('should exclude nested paths without dropping their parent directories', async () => {
+      if (!backupBucketAvailable) return;
+
+      const TEST_DIR = `/workspace/nested-excludes-test-${crypto.randomUUID().slice(0, 8)}`;
+
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: shellCommand([
+            `git init ${TEST_DIR}`,
+            `mkdir -p ${TEST_DIR}/alpha/beta/gamma ${TEST_DIR}/nested/alpha/beta/gamma ${TEST_DIR}/logs/app`,
+            `printf '*.log\n' > ${TEST_DIR}/.gitignore`,
+            `echo "keep" > ${TEST_DIR}/alpha/keep.txt`,
+            `echo "excluded" > ${TEST_DIR}/alpha/beta/gamma/file.txt`,
+            `echo "keep" > ${TEST_DIR}/nested/alpha/beta/gamma/file.txt`,
+            `echo "keep" > ${TEST_DIR}/logs/app/keep.txt`,
+            `echo "ignored" > ${TEST_DIR}/logs/app/debug.log`
+          ])
+        })
+      });
+      expect(setupResponse.ok).toBe(true);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          dir: TEST_DIR,
+          gitignore: true,
+          excludes: ['alpha/*/gamma']
+        })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: shellCommand([
+            `rm -rf ${TEST_DIR}`,
+            `mkdir -p ${TEST_DIR}`
+          ])
+        })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/alpha/keep.txt && echo alpha-keep:yes || echo alpha-keep:no`,
+              `test -e ${TEST_DIR}/alpha/beta/gamma && echo gamma:no || echo gamma:yes`,
+              `test -f ${TEST_DIR}/nested/alpha/beta/gamma/file.txt && echo nested-keep:yes || echo nested-keep:no`,
+              `test -f ${TEST_DIR}/logs/app/keep.txt && echo logs-keep:yes || echo logs-keep:no`,
+              `test -e ${TEST_DIR}/logs/app/debug.log && echo log:no || echo log:yes`
+            ],
+            '; '
+          )
+        })
+      });
+      const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
+      expect(verifyResult.exitCode).toBe(0);
+      expect(verifyResult.stdout).toContain('alpha-keep:yes');
+      expect(verifyResult.stdout).toContain('gamma:yes');
+      expect(verifyResult.stdout).toContain('nested-keep:yes');
+      expect(verifyResult.stdout).toContain('logs-keep:yes');
+      expect(verifyResult.stdout).toContain('log:yes');
+
+      await cleanupDir(workerUrl, headers, TEST_DIR);
+    }, 60000);
   });
 
   describe('Nested directory tree backup', () => {

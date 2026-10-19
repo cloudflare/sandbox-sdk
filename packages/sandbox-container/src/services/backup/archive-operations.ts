@@ -236,10 +236,14 @@ export class ArchiveOperations {
         normalizedExcludes.push(normalized);
       }
 
-      const userExcludePatterns = normalizedExcludes.flatMap((pattern) => [
-        pattern,
-        `... ${pattern}`
-      ]);
+      // A single-component pattern also gets the non-anchored "... " form so
+      // it matches at any depth. Patterns with a slash stay relative to the
+      // backup root: mksquashfs 4.5 applies "... a/b" to all of "a".
+      const userExcludePatterns = normalizedExcludes.flatMap((pattern) =>
+        pattern.replace(/\/+$/, '').includes('/')
+          ? [pattern]
+          : [pattern, `... ${pattern}`]
+      );
 
       const excludePatterns = [
         ...new Set([...gitignorePatterns, ...userExcludePatterns])
@@ -404,16 +408,11 @@ export class ArchiveOperations {
       .filter((line) => line.length > 0)
       .map(ArchiveOperations.escapeMksquashfsWildcardLiteral);
 
-    // Include both direct relative paths and sticky "... " patterns.
-    // mksquashfs path matching differs depending on how the source directory
-    // is represented in the archive, so emitting both forms ensures ignored
-    // content is excluded whether entries appear at the archive root or below
-    // the source directory basename.
-    const excludePatterns = relativePaths.flatMap((path) => [
-      path,
-      `... ${path}`
-    ]);
-    return [...new Set(excludePatterns)];
+    // Git returns paths relative to the backup root, which is where
+    // mksquashfs anchors plain patterns. A non-anchored "... " form would
+    // also match unrelated paths, and mksquashfs 4.5 applies "... a/b" to
+    // all of "a".
+    return [...new Set(relativePaths)];
   }
 
   private static escapeMksquashfsWildcardLiteral(path: string): string {
@@ -423,8 +422,8 @@ export class ArchiveOperations {
   /**
    * Normalize a user-provided exclude pattern for mksquashfs compatibility.
    * mksquashfs uses fnmatch-style wildcards which do not support ** (globstar).
-   * The mksquashfs "... " prefix already provides recursive directory matching,
-   * making leading ** redundant. Returns null if the pattern reduces to empty.
+   * Leading and embedded ** components are dropped. Returns null if the
+   * pattern reduces to empty.
    */
   static normalizeMksquashfsPattern(pattern: string): string | null {
     return normalizeBackupExcludePattern(pattern);
