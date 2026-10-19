@@ -6724,13 +6724,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
       const exitVars = Array.from({ length: numParts }, (_, i) => `$E${i}`);
 
+      // On failure, list each part's exit code. A part's stderr doesn't always
+      // say why it stopped, for example when the OOM killer ends it (137).
       const script = [
         `rm -f ${shellEscape(tmpPath)}`,
         `truncate -s ${expectedSize} ${shellEscape(tmpPath)}`,
         ...startLines,
         ...waitLines,
         `FAILED=$(( ${exitVars.join(' + ')} ))`,
-        `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
+        `if [ "$FAILED" -ne 0 ]; then echo "download part exit codes: ${exitVars.join(' ')}" >&2; rm -f ${shellEscape(tmpPath)}; exit 1; fi`
       ].join('; ');
 
       // Run the script in a subshell. execWithSession evaluates commands in

@@ -3272,6 +3272,11 @@ describe('Sandbox - Automatic Session Management', () => {
       // exit from terminating the session's long-lived shell.
       const downloadCommand = execWithSessionSpy.mock.calls[1][0] as string;
       expect(downloadCommand).toMatch(/^\( .*exit 1; fi \)$/);
+      // Exit codes identify which part failed and how, including signal kills
+      // that leave no stderr from the part itself.
+      expect(downloadCommand).toMatch(
+        /echo "download part exit codes: \$E0( \$E\d+)+" >&2/
+      );
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {
