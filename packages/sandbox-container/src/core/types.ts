@@ -77,7 +77,7 @@ export interface ReadOptions {
 
 export interface WriteOptions {
   encoding?: string;
-  mode?: string;
+  ownerOnly?: boolean;
 }
 
 export interface MkdirOptions {

@@ -7,6 +7,9 @@ import {
   spyOn,
   vi
 } from 'bun:test';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '@sandbox-container/core/types';
@@ -717,6 +720,27 @@ describe('FileService', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('FILESYSTEM_ERROR');
+      }
+    });
+
+    it('creates ownerOnly files with mode 0600 and refuses existing paths', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'file-service-'));
+      const path = join(dir, 'secret');
+      try {
+        const created = await fileService.write(path, 'bucket:key:secret', {
+          ownerOnly: true
+        });
+        expect(created.success).toBe(true);
+        expect((await stat(path)).mode & 0o777).toBe(0o600);
+        expect(await readFile(path, 'utf8')).toBe('bucket:key:secret');
+
+        const existing = await fileService.write(path, 'other', {
+          ownerOnly: true
+        });
+        expect(existing.success).toBe(false);
+        expect(await readFile(path, 'utf8')).toBe('bucket:key:secret');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
       }
     });
   });

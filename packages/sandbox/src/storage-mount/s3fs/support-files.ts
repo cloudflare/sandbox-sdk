@@ -3,6 +3,23 @@ import type { S3FSHost } from './host';
 
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
+// s3fs refuses support files that other users can read. Create them with mode
+// 0600 so the password file is never readable while it is being written, and
+// still chmod for containers that predate `ownerOnly` and ignore it.
+async function writeOwnerOnlyFile(
+  host: S3FSHost,
+  operation: string,
+  path: string,
+  content: string
+): Promise<void> {
+  await host.runRuntimeCall(`mount.s3fs.write${operation}`, (control) =>
+    control.files.writeFile(path, content, { ownerOnly: true })
+  );
+  await host.runRuntimeCall(`mount.s3fs.chmod${operation}`, (control) =>
+    control.mounts.chmodOwnerOnly(path)
+  );
+}
+
 export function generatePasswordFilePath(): string {
   return `/tmp/.passwd-s3fs-${crypto.randomUUID()}`;
 }
@@ -15,11 +32,11 @@ export async function createDisableExpectHeaderFile(
   host: S3FSHost,
   headerFilePath: string
 ): Promise<void> {
-  await host.runRuntimeCall('mount.s3fs.writeHeaderFile', (control) =>
-    control.files.writeFile(headerFilePath, S3FS_DISABLE_EXPECT_HEADER_CONFIG)
-  );
-  await host.runRuntimeCall('mount.s3fs.chmodHeaderFile', (control) =>
-    control.mounts.chmodOwnerOnly(headerFilePath)
+  await writeOwnerOnlyFile(
+    host,
+    'HeaderFile',
+    headerFilePath,
+    S3FS_DISABLE_EXPECT_HEADER_CONFIG
   );
 }
 
@@ -30,12 +47,7 @@ export async function createPasswordFile(
   credentials: BucketCredentials
 ): Promise<void> {
   const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
-  await host.runRuntimeCall('mount.s3fs.writePasswordFile', (control) =>
-    control.files.writeFile(passwordFilePath, content)
-  );
-  await host.runRuntimeCall('mount.s3fs.chmodPasswordFile', (control) =>
-    control.mounts.chmodOwnerOnly(passwordFilePath)
-  );
+  await writeOwnerOnlyFile(host, 'PasswordFile', passwordFilePath, content);
 }
 
 export async function deletePasswordFile(
