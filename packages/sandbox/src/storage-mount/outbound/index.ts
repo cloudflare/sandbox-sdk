@@ -4,15 +4,20 @@ import type { HTTPAuthInterceptorParams } from '../../extensions/index.js';
 type GitAuthInterceptorParams = HTTPAuthInterceptorParams;
 
 import { InvalidMountConfigError } from '../errors';
-import type { S3CredentialProxyParams } from '../types';
+import type { MountInfo, S3CredentialProxyParams } from '../types';
 import {
   CONTAINER_PROXY_CLASS_NAME,
-  installSDKOutboundHandlers,
   S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST,
   S3_CREDENTIAL_PROXY_HOST
 } from './container-proxy';
+import { buildR2EgressParams, buildS3CredentialProxyParams } from './params';
 import type { R2EgressParams } from './r2-egress-handler';
-import { SELF_TEST_PATH as S3_CREDENTIAL_PROXY_SELF_TEST_PATH } from './s3-credential-proxy-handler';
+import type { RestoredMountRoutes } from './restored-routes';
+import {
+  evictDirectoryMarkerCacheForMount,
+  evictSigV4ClientCacheEntry,
+  SELF_TEST_PATH as S3_CREDENTIAL_PROXY_SELF_TEST_PATH
+} from './s3-credential-proxy-handler';
 
 export type EgressContainerState = DurableObjectState<{}> & {
   exports?: {
@@ -41,7 +46,7 @@ export type EgressContainerState = DurableObjectState<{}> & {
 
 export interface MountOutboundHost {
   ctx: EgressContainerState;
-  constructorRef: Function;
+  restoredMountRoutes: RestoredMountRoutes;
   enableInternet?: boolean;
   logger: Logger;
   setOutboundByHost<T>(host: string, method: string, params: T): Promise<void>;
@@ -59,8 +64,14 @@ function isFetcher(value: unknown): value is Fetcher {
 
 export async function configureR2EgressOutbound(
   host: MountOutboundHost,
-  params: R2EgressParams
+  activeParams: R2EgressParams
 ): Promise<void> {
+  const params: R2EgressParams = {
+    buckets: {
+      ...host.restoredMountRoutes.r2Buckets,
+      ...activeParams.buckets
+    }
+  };
   const ctx = host.ctx;
   if (!ctx.container?.interceptOutboundHttp) {
     throw new InvalidMountConfigError(
@@ -73,7 +84,6 @@ export async function configureR2EgressOutbound(
     );
   }
 
-  installSDKOutboundHandlers(host.constructorRef);
   if (Object.keys(params.buckets).length > 0) {
     await host.setOutboundByHost<R2EgressParams>(
       'r2.internal',
@@ -128,8 +138,6 @@ export async function configureGitAuthInterceptor(
     );
   }
 
-  installSDKOutboundHandlers(host.constructorRef);
-
   const hostOverrides: Record<
     string,
     { method: string; params: GitAuthInterceptorParams }
@@ -164,8 +172,14 @@ export async function configureGitAuthInterceptor(
 
 export async function configureS3CredentialProxyOutbound(
   host: MountOutboundHost,
-  params: S3CredentialProxyParams
+  activeParams: S3CredentialProxyParams
 ): Promise<void> {
+  const params: S3CredentialProxyParams = {
+    mounts: {
+      ...host.restoredMountRoutes.credentialProxyMounts,
+      ...activeParams.mounts
+    }
+  };
   const ctx = host.ctx;
   if (!ctx.container?.interceptOutboundHttp) {
     throw new InvalidMountConfigError(
@@ -180,7 +194,6 @@ export async function configureS3CredentialProxyOutbound(
 
   const hosts = [S3_CREDENTIAL_PROXY_HOST, S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST];
 
-  installSDKOutboundHandlers(host.constructorRef);
   if (Object.keys(params.mounts).length > 0) {
     for (const outboundHost of hosts) {
       await host.setOutboundByHost<S3CredentialProxyParams>(
@@ -244,5 +257,61 @@ export async function configureS3CredentialProxyOutbound(
 
   for (const outboundHost of hosts) {
     await ctx.container.interceptOutboundHttp(outboundHost, fetcher);
+  }
+}
+
+/**
+ * Drop the routes restored for the mounts of a container that has stopped.
+ */
+export async function releaseRestoredMountRoutes(
+  host: MountOutboundHost,
+  mounts: Iterable<[string, MountInfo]>
+): Promise<void> {
+  const routes = host.restoredMountRoutes;
+  for (const mountId of Object.keys(routes.credentialProxyMounts)) {
+    evictSigV4ClientCacheEntry(mountId);
+    evictDirectoryMarkerCacheForMount(mountId);
+  }
+  if (Object.keys(routes.r2Buckets).length > 0) routes.staleR2 = true;
+  if (Object.keys(routes.credentialProxyMounts).length > 0) {
+    routes.staleCredentialProxy = true;
+  }
+  routes.r2Buckets = {};
+  routes.credentialProxyMounts = {};
+  await removeStaleMountRoutes(host, mounts);
+}
+
+/**
+ * Rewrite the routes that still carry a stopped container's restored mounts
+ * so they cover only `mounts`. A failed update stays marked and is retried on
+ * the next container start or stop.
+ */
+export async function removeStaleMountRoutes(
+  host: MountOutboundHost,
+  mounts: Iterable<[string, MountInfo]>
+): Promise<void> {
+  const routes = host.restoredMountRoutes;
+  if (routes.staleR2) {
+    try {
+      await configureR2EgressOutbound(host, buildR2EgressParams(mounts));
+      routes.staleR2 = false;
+    } catch (error) {
+      host.logger.warn('Failed to remove stale R2 mount routes', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  if (routes.staleCredentialProxy) {
+    try {
+      await configureS3CredentialProxyOutbound(
+        host,
+        buildS3CredentialProxyParams(mounts)
+      );
+      routes.staleCredentialProxy = false;
+    } catch (error) {
+      host.logger.warn('Failed to remove stale credential proxy mount routes', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }

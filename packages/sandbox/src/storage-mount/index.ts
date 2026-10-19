@@ -22,10 +22,12 @@ export {
 export {
   CONTAINER_PROXY_CLASS_NAME,
   ContainerProxy,
+  installSDKOutboundHandlers,
   type OutboundHandlerRegistry,
   S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST,
   S3_CREDENTIAL_PROXY_HOST
 } from './outbound/container-proxy';
+export { RestoredMountRoutes } from './outbound/restored-routes';
 export { MountRegistry } from './registry';
 export {
   createDisableExpectHeaderFile,

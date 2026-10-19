@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
 import { cleanupBucketMountsForDestroy } from '../src/storage-mount/lifecycle-cleanup';
 import type { MountOutboundHost } from '../src/storage-mount/outbound';
+import { RestoredMountRoutes } from '../src/storage-mount/outbound/restored-routes';
 import { MountRegistry } from '../src/storage-mount/registry';
 import type { S3FSHost } from '../src/storage-mount/s3fs';
 import type {
@@ -45,7 +46,7 @@ function createOutboundHost(logger: Logger): MountOutboundHost {
         interceptOutboundHttp: vi.fn(async () => undefined)
       }
     } as unknown as MountOutboundHost['ctx'],
-    constructorRef: function TestContainer() {},
+    restoredMountRoutes: new RestoredMountRoutes(),
     logger,
     setOutboundByHost: vi.fn(async () => undefined),
     removeOutboundByHost: vi.fn(async () => undefined)

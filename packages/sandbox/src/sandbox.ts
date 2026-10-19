@@ -110,7 +110,9 @@ import {
   ContainerProxy,
   configureGitAuthInterceptor,
   type EgressContainerState,
-  type MountOutboundHost
+  installSDKOutboundHandlers,
+  type MountOutboundHost,
+  RestoredMountRoutes
 } from './storage-mount';
 import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
 import {
@@ -1100,6 +1102,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private bucketMounts: BucketMountService;
+  private restoredMountRoutes: RestoredMountRoutes;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
   private previewService: PreviewService;
@@ -1198,7 +1201,18 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
+    // The base constructor restores persisted outbound overrides and drops any
+    // whose method is not registered for the concrete class. Register the SDK
+    // handlers first so bucket mounts and git auth keep their egress routes
+    // when the Durable Object restarts under a running container. Registered
+    // handlers also make the base class apply and persist outbound
+    // interception, which needs the ContainerProxy export these features
+    // already require.
+    if ((ctx as EgressContainerState).exports?.ContainerProxy) {
+      installSDKOutboundHandlers(new.target);
+    }
     super(ctx, env);
+    this.restoredMountRoutes = RestoredMountRoutes.fromContainer(this);
 
     const envObj = env as Record<string, unknown>;
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
@@ -1849,6 +1863,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.logger.debug('Sandbox started', {
       replacementStartTransitionCompleted
     });
+    await this.bucketMounts.removeStaleRoutes();
   }
 
   override async start(
@@ -3217,7 +3232,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private getMountOutboundHost(): MountOutboundHost {
     return {
       ctx: this.ctx as EgressContainerState,
-      constructorRef: this.constructor,
+      restoredMountRoutes: this.restoredMountRoutes,
       enableInternet: this.enableInternet,
       logger: this.logger,
       setOutboundByHost: (host, method, params) =>
