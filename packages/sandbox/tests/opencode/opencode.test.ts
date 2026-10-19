@@ -1,4 +1,6 @@
 // packages/sandbox/tests/opencode/opencode.test.ts
+
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type { Process, ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -189,9 +191,29 @@ describe('createOpencode', () => {
     expect(mockProcess.waitForPort).toHaveBeenCalledWith(4096, {
       mode: 'http',
       path: '/path',
-      status: 200,
+      status: { min: 200, max: 401 },
       timeout: 180_000
     });
+  });
+
+  it('authenticates the client when env sets OPENCODE_SERVER_PASSWORD', async () => {
+    const sdk = await vi.importActual<
+      typeof import('@opencode-ai/sdk/v2/client')
+    >('@opencode-ai/sdk/v2/client');
+    vi.mocked(createOpencodeClient).mockImplementationOnce(
+      sdk.createOpencodeClient
+    );
+    const { client } = await createOpencode(mockSandbox as unknown as Sandbox, {
+      env: { OPENCODE_SERVER_PASSWORD: 'secret' }
+    });
+    mockSandbox.containerFetch.mockResolvedValue(Response.json([]));
+
+    await client.session.list();
+
+    const [request] = mockSandbox.containerFetch.mock.lastCall as [Request];
+    expect(request.headers.get('Authorization')).toBe(
+      `Basic ${btoa('opencode:secret')}`
+    );
   });
 
   it('should return client and server', async () => {
@@ -254,7 +276,7 @@ describe('createOpencode', () => {
       expect(startingProcess.waitForPort).toHaveBeenCalledWith(4096, {
         mode: 'http',
         path: '/path',
-        status: 200,
+        status: { min: 200, max: 401 },
         timeout: 180_000
       });
     });

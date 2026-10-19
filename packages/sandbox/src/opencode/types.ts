@@ -12,7 +12,11 @@ export interface OpencodeOptions {
   directory?: string;
   /** OpenCode configuration */
   config?: Config;
-  /** Additional environment variables to pass to the OpenCode process */
+  /**
+   * Additional environment variables to pass to the OpenCode process. When
+   * this sets `OPENCODE_SERVER_PASSWORD`, the client from `createOpencode()`
+   * authenticates with it.
+   */
   env?: Record<string, string>;
 }
 
