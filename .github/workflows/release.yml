@@ -34,7 +34,7 @@ jobs:
       PACKAGE: "@cloudflare/sandbox"
       IMAGE: docker.io/cloudflare/sandbox
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
