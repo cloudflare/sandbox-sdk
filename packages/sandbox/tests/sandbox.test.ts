@@ -3241,6 +3241,44 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(downloadCommand).not.toContain('.part0.tmp');
     });
 
+    it('should report a failed parallel download without exiting the backup session shell', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const curlError = 'curl: (22) The requested URL returned error: 403';
+      const execWithSessionSpy = vi
+        .spyOn(backupSandbox as any, 'execWithSession')
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: '', stderr: curlError, exitCode: 1 })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
+      vi.spyOn(
+        backupSandbox as any,
+        'generatePresignedGetURL'
+      ).mockResolvedValue('https://example.com/archive');
+
+      await expect(
+        (backupSandbox as any).downloadBackupParallel(
+          '/var/backups/test.sqsh',
+          'backups/test/data.sqsh',
+          16 * 1024 * 1024,
+          'test-backup-id',
+          '/app/project',
+          'backup-session'
+        )
+      ).rejects.toMatchObject({
+        code: 'BACKUP_RESTORE_FAILED',
+        message: expect.stringContaining(curlError)
+      });
+
+      // The script ends in `exit 1` on failure; only a subshell keeps that
+      // exit from terminating the session's long-lived shell.
+      const downloadCommand = execWithSessionSpy.mock.calls[1][0] as string;
+      expect(downloadCommand).toMatch(/^\( .*exit 1; fi \)$/);
+      // Exit codes identify which part failed and how, including signal kills
+      // that leave no stderr from the part itself.
+      expect(downloadCommand).toMatch(
+        /echo "download part exit codes: \$E0( \$E\d+)+" >&2/
+      );
+    });
+
     it('should reject unsupported backup roots before calling the container', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi.spyOn(
