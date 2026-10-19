@@ -70,9 +70,13 @@ describe('Shell', () => {
     expect(loggerSpies.info).toHaveBeenCalledWith(
       'Command completed successfully'
     );
-    expect(JSON.stringify(loggerSpies.info.mock.calls)).not.toContain(
-      'echo hello'
-    );
+    const logged = JSON.stringify([
+      loggerSpies.debug.mock.calls,
+      loggerSpies.info.mock.calls,
+      loggerSpies.warn.mock.calls,
+      loggerSpies.error.mock.calls
+    ]);
+    expect(logged).not.toContain('echo hello');
   });
 
   it('halts subsequent commands after a timeout error', async () => {
