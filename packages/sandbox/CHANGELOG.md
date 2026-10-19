@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.12.11
+
+### Patch Changes
+
+- [#889](https://github.com/cloudflare/sandbox-sdk/pull/889) [`119336e`](https://github.com/cloudflare/sandbox-sdk/commit/119336ef67819feda18cf0f716f10db4e1eece73) Thanks [@scuffi](https://github.com/scuffi)! - Stop backups from dropping whole directories when `excludes` or `gitignore: true` match a nested path. For example, `excludes: ['.cache/foo/*/node_modules']` no longer removes all of `.cache` from the archive. A multi-component pattern such as `build/output` now matches only relative to the backup directory, while a single-component pattern such as `node_modules` still matches at any depth. Because mksquashfs does not support `**`, a pattern like `**/node_modules/.cache` now excludes only `node_modules/.cache` at the root of the backup directory; add a pattern for each nested location that must stay out of the backup.
+
+- [#914](https://github.com/cloudflare/sandbox-sdk/pull/914) [`66862ff`](https://github.com/cloudflare/sandbox-sdk/commit/66862ff45736e416422736b225da90b5f1dd9cd3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Return 404 with `workspace_read_not_found` from the bridge's `GET /v1/sandbox/:id/file/*` when the file doesn't exist. The route used to return 200 with an empty body, the same response as an empty file.
+
+- [#894](https://github.com/cloudflare/sandbox-sdk/pull/894) [`20d72db`](https://github.com/cloudflare/sandbox-sdk/commit/20d72db671876a3e50ab0881758cae7576ae2b6e) Thanks [@scuffi](https://github.com/scuffi)! - Fix local bucket mounts for large files and write bursts. On the RPC transport, objects over 4 MiB now stream into the container instead of failing with an interrupted runtime connection. Container files stream back to R2 byte for byte, without loading the whole file into Worker memory. A file being written uploads once its changes settle, instead of on every write.
+
+- [#926](https://github.com/cloudflare/sandbox-sdk/pull/926) [`6678b13`](https://github.com/cloudflare/sandbox-sdk/commit/6678b1378f4ba61586d26f84ee9616a171e6303c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Stop writing command text and output to Sandbox logs. Exec and process log events now record IDs, exit codes, durations, and output lengths, and the OpenAI Agents `Shell` and `Editor` adapters no longer log commands, stderr, or patch text, so secrets in commands, output, or patches no longer reach Workers Logs or container logs. Command failure messages no longer repeat the command; it remains available on the error's `context.command`.
+
+- [#888](https://github.com/cloudflare/sandbox-sdk/pull/888) [`6c9edcc`](https://github.com/cloudflare/sandbox-sdk/commit/6c9edcc4e466390f52540e48dbd3809ca80fcc89) Thanks [@scuffi](https://github.com/scuffi)! - Fix `restoreBackup()` error reporting for archives of 10 MB or more. A failed download part now throws a `BackupRestoreError` that includes curl's error output and each part's exit code, instead of a `Shell terminated unexpectedly` session error.
+
+- [#887](https://github.com/cloudflare/sandbox-sdk/pull/887) [`13f477d`](https://github.com/cloudflare/sandbox-sdk/commit/13f477d6fc1b4a73b61d333de6a222e8876de860) Thanks [@scuffi](https://github.com/scuffi)! - Sync local bucket mounts outside `/workspace`, such as `/data`, from the container back to R2. `watch()` and `checkChanges()` now accept any absolute path on every transport, as documented. A local mount whose container rejects the watch now logs one error instead of retrying forever.
+
 ## 0.12.10
 
 ### Patch Changes
