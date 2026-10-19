@@ -1098,7 +1098,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Bucket mount routes restored from a previous instance of this Durable
   // Object. activeMounts starts empty after a restart, but s3fs mounts in a
   // container that kept running still send requests, so every route update
-  // keeps these routes until that container stops.
+  // keeps these routes until onStop() reports that container stopped. The
+  // base class reports a stop it missed before it starts a new container.
   private restoredMountRoutes: RestoredMountRoutes = noRestoredMountRoutes();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
@@ -2077,6 +2078,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.validateMountPath(mountPath);
       this.validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
 
+      // A mount from before a Durable Object restart is not in activeMounts,
+      // but its s3fs process still uses the binding's route.
+      const restoredRoute = this.restoredMountRoutes.r2Buckets[bucket];
+      if (
+        restoredRoute &&
+        (restoredRoute.prefix !== prefix ||
+          (restoredRoute.readOnly ?? false) !== (options.readOnly ?? false))
+      ) {
+        throw new InvalidMountConfigError(
+          `R2 binding "${bucket}" is already mounted with a different prefix or readOnly setting. ` +
+            'Mount the same binding only once, or use the same settings for additional mounts.'
+        );
+      }
+
       for (const [existingMountPath, mountInfo] of this.activeMounts) {
         if (
           mountInfo.mountType === 'r2-egress' &&
@@ -3019,9 +3034,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Sandbox started');
 
     await this.currentRuntime.markStarted();
-
-    // A new container has none of the previous container's s3fs mounts.
-    await this.releaseRestoredMountRoutes();
 
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
@@ -7866,25 +7878,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Drop the routes restored for a previous container's mounts, keeping the
-   * routes for mounts made by this instance.
+   * routes for mounts made by this instance. A route that cannot be updated
+   * stays restored so the next stop tries again.
    */
   private async releaseRestoredMountRoutes(): Promise<void> {
     const { r2Buckets, credentialProxyMounts } = this.restoredMountRoutes;
-    this.restoredMountRoutes = noRestoredMountRoutes();
     if (Object.keys(r2Buckets).length > 0) {
-      await this.configureR2EgressOutbound(this.getR2EgressParams()).catch(
-        () => {}
-      );
+      this.restoredMountRoutes.r2Buckets = {};
+      try {
+        await this.configureR2EgressOutbound(this.getR2EgressParams());
+      } catch (error) {
+        this.restoredMountRoutes.r2Buckets = r2Buckets;
+        this.logger.warn('Failed to remove restored R2 mount routes', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
     const credentialProxyMountIds = Object.keys(credentialProxyMounts);
     if (credentialProxyMountIds.length > 0) {
-      for (const mountId of credentialProxyMountIds) {
-        evictSigV4ClientCacheEntry(mountId);
-        evictDirectoryMarkerCacheForMount(mountId);
+      this.restoredMountRoutes.credentialProxyMounts = {};
+      try {
+        await this.configureS3CredentialProxyOutbound(
+          this.getS3CredentialProxyParams()
+        );
+        for (const mountId of credentialProxyMountIds) {
+          evictSigV4ClientCacheEntry(mountId);
+          evictDirectoryMarkerCacheForMount(mountId);
+        }
+      } catch (error) {
+        this.restoredMountRoutes.credentialProxyMounts = credentialProxyMounts;
+        this.logger.warn(
+          'Failed to remove restored credential proxy mount routes',
+          {
+            error: error instanceof Error ? error.message : String(error)
+          }
+        );
       }
-      await this.configureS3CredentialProxyOutbound(
-        this.getS3CredentialProxyParams()
-      ).catch(() => {});
     }
   }
 
