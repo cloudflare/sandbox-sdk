@@ -152,7 +152,7 @@ export function sseToByteStream(
  * A missing file arrives as an error event inside a successful stream, so it
  * rejects here, while the caller can still choose the HTTP status.
  */
-export async function openSseByteStream(
+export async function openSSEByteStream(
   sse: ReadableStream<Uint8Array>
 ): Promise<ReadableStream<Uint8Array>> {
   const iterator = streamFile(sse)[Symbol.asyncIterator]();

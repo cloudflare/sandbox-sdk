@@ -103,6 +103,28 @@ describe('GET /v1/sandbox/:id/file/* — path validation', () => {
     expect(body.code).toBe('workspace_read_not_found');
   });
 
+  it('returns 502 when another stream error names a file called "file not found"', async () => {
+    const encoder = new TextEncoder();
+    mockSandbox.readFileStream.mockResolvedValue(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: 'error',
+                error: "Failed to get file metadata for '/workspace/file not found.txt': EACCES"
+              })}\n\n`
+            )
+          );
+          controller.close();
+        }
+      })
+    );
+    const res = await readRequest('workspace/file%20not%20found.txt');
+
+    expect(res.status).toBe(502);
+  });
+
   it('returns 502 on SDK transport error', async () => {
     mockSandbox.readFileStream.mockRejectedValue(new Error('connection lost'));
     const res = await readRequest('workspace/main.py');
