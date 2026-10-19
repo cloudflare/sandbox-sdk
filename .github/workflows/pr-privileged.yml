@@ -102,7 +102,7 @@ jobs:
       - name: Generate an app token to remove the label
         id: app-token
         if: steps.check.outputs.revoke == 'true'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
