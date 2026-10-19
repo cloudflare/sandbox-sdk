@@ -3357,6 +3357,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Explicit container-start hook for the RPC transport.
    *
+   * The control connection calls this hook every time it connects, including
+   * when it reconnects after an idle disconnect. A running, healthy container
+   * is left alone, as in {@link containerFetch}: the base class runs
+   * `onStart()` on every `startAndWaitForPorts()`, and `onStart()` treats the
+   * container as new, recording a new runtime identity and dropping quick
+   * tunnels from storage.
+   *
    * Runs `startAndWaitForPorts` under a short instance-get budget
    * ({@link RPC_START_INSTANCE_GET_TIMEOUT_MS}) so a single attempt fails fast
    * under capacity pressure — the base class throws the classifiable
@@ -3376,6 +3383,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async startContainerForRPC(): Promise<void> {
     try {
+      const state = await this.getState();
+      if (state.status === 'healthy' && this.ctx.container?.running !== false) {
+        return;
+      }
       await this.startAndWaitForPorts({
         ports: 3000,
         cancellationOptions: {

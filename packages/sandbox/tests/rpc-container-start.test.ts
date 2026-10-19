@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Reproduces issue #794 end-to-end through a real Sandbox DO on the RPC
- * transport.
+ * Container start on the RPC transport, driven through a real Sandbox DO.
+ *
+ * The first group reproduces issue #794.
  *
  * In production the Containers platform raises
  *
@@ -32,6 +33,14 @@ const NO_INSTANCE_MESSAGE =
 // Throwing switch so individual tests can pick which platform message the
 // base container raises on the WebSocket-upgrade path.
 let upgradeError: Error = new Error(NO_INSTANCE_MESSAGE);
+let containerStatus = 'stopped';
+const startAndWaitForPorts = vi.fn(async (): Promise<void> => {
+  throw upgradeError;
+});
+const baseContainerFetch = vi.fn(
+  async (): Promise<Response> =>
+    new Response('upgrade refused', { status: 500 })
+);
 
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
@@ -65,13 +74,16 @@ vi.mock('@cloudflare/containers', () => {
     // Sandbox.containerFetch override catches it via isNoInstanceError and
     // converts it into a structured CONTAINER_UNAVAILABLE 503 response.
     async startAndWaitForPorts(): Promise<void> {
-      throw upgradeError;
+      return startAndWaitForPorts();
+    }
+    // Base-class containerFetch, reached once the container is healthy.
+    async containerFetch(): Promise<Response> {
+      return baseContainerFetch();
     }
     async destroy(): Promise<void> {}
     async stop(): Promise<void> {}
     async getState() {
-      // Non-healthy so containerFetch runs its startup path.
-      return { status: 'stopped' };
+      return { status: containerStatus };
     }
     renewActivityTimeout() {}
   };
@@ -133,8 +145,11 @@ function makeCtx() {
   };
 }
 
-async function makeRpcSandbox(): Promise<Sandbox> {
+async function makeRpcSandbox(
+  options: { containerRunning?: boolean } = {}
+): Promise<Sandbox> {
   const ctx = makeCtx();
+  ctx.container.running = options.containerRunning ?? false;
   // SANDBOX_TRANSPORT=rpc forces the ContainerControlClient (RPC transport).
   const env = { SANDBOX_TRANSPORT: 'rpc' } as Record<string, unknown>;
   const sandbox = new Sandbox(
@@ -158,6 +173,7 @@ async function makeRpcSandbox(): Promise<Sandbox> {
 describe('RPC transport: no container instance (issue #794)', () => {
   beforeEach(() => {
     upgradeError = new Error(NO_INSTANCE_MESSAGE);
+    containerStatus = 'stopped';
   });
 
   afterEach(() => {
@@ -234,5 +250,25 @@ describe('RPC transport: no container instance (issue #794)', () => {
     expect((err as Error).message).toContain('code was updated');
     expect((err as Error).message).not.toContain('disposing the main stub');
     expect((err as Error).message).not.toContain('was interrupted');
+  });
+});
+
+describe('RPC transport: connecting to a running container', () => {
+  beforeEach(() => {
+    containerStatus = 'healthy';
+    startAndWaitForPorts.mockClear();
+    baseContainerFetch.mockClear();
+  });
+
+  it('does not start a healthy container again', async () => {
+    // Every reconnect after an idle disconnect runs the start hook. Starting
+    // again would rerun onStart(), which records a new runtime identity and
+    // drops quick tunnels while the container and cloudflared keep running.
+    const sandbox = await makeRpcSandbox({ containerRunning: true });
+
+    await sandbox.mkdir('/workspace', { recursive: true }).catch(() => {});
+
+    expect(baseContainerFetch).toHaveBeenCalled();
+    expect(startAndWaitForPorts).not.toHaveBeenCalled();
   });
 });

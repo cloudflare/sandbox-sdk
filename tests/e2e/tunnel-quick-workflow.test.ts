@@ -128,6 +128,19 @@ console.log("Server listening on port " + server.port);
         const listed = await listTunnels();
         expect(listed.map((t) => t.id)).toContain(tunnel.id);
 
+        // The record survives the RPC control connection idling out. An
+        // idle connection closes within about 2 s, and the exec reconnects.
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
+        const execResponse = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command: 'true' })
+        });
+        expect(execResponse.status).toBe(200);
+        const afterReconnect = await getTunnel(TUNNEL_TEST_PORT);
+        expect(afterReconnect.id).toBe(tunnel.id);
+        expect((await listTunnels()).map((t) => t.id)).toContain(tunnel.id);
+
         // 5. Fetch the marker through the public URL. The Cloudflare edge
         //    can take 10–20 seconds to register the *.trycloudflare.com
         //    route after cloudflared reports /ready, so allow a generous
