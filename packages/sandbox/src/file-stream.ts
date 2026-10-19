@@ -92,25 +92,29 @@ export async function* streamFile(
  * Read the metadata event at the head of a file stream and return it with
  * the decoded chunks that follow. Callers that need the file size before
  * consuming the body, such as sizing a FixedLengthStream, use this instead of
- * streamFile().
+ * streamFile(). Call cancel() to release the stream without reading the rest.
  */
 export async function openFileStream(
   stream: ReadableStream<Uint8Array>
 ): Promise<{
   metadata: FileMetadata;
   chunks: AsyncGenerator<FileChunk, FileMetadata>;
+  cancel: () => Promise<void>;
 }> {
   const events = parseSSE(stream);
+  const cancel = async () => {
+    await events.return(undefined);
+  };
   try {
     const first = await events.next();
     if (first.done) {
       throw new Error('Stream ended unexpectedly');
     }
     const metadata = readMetadataEvent(first.value);
-    return { metadata, chunks: decodeChunks(events, metadata) };
+    return { metadata, chunks: decodeChunks(events, metadata), cancel };
   } catch (error) {
     // Cancel the underlying stream when the head of it is unusable.
-    await events.return(undefined);
+    await cancel();
     throw error;
   }
 }

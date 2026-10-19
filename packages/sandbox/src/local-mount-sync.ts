@@ -499,39 +499,56 @@ export class LocalMountSyncManager {
       this.sessionId,
       { encoding: 'base64' }
     );
-    const { metadata, chunks } = await openFileStream(stream);
+    const file = await openFileStream(stream);
 
-    // Older containers ignore the encoding option and send text files as
-    // strings. Re-encoding is exact for valid UTF-8; anything else changes
-    // the length, so the FixedLengthStream fails the upload rather than
-    // storing altered bytes.
-    const encoder = new TextEncoder();
-    const body = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        const next = await chunks.next();
-        if (next.done) {
-          controller.close();
-        } else {
-          controller.enqueue(
-            typeof next.value === 'string'
-              ? encoder.encode(next.value)
-              : next.value
-          );
-        }
-      },
-      async cancel() {
-        await chunks.return(metadata);
-      }
-    });
-
-    // R2 needs a known length to accept a stream.
-    const sized = new FixedLengthStream(metadata.size);
-    body.pipeTo(sized.writable).catch(() => {});
-    await this.bucket.put(r2Key, sized.readable);
+    if (file.metadata.isBinary && file.metadata.encoding === 'base64') {
+      await this.putFileStream(r2Key, file);
+    } else {
+      // Older containers ignore the encoding option and stream text files as
+      // UTF-8 strings, which cannot carry arbitrary bytes. Read those whole.
+      await file.cancel();
+      const result = await this.client.files.readFile(
+        containerPath,
+        this.sessionId,
+        { encoding: 'base64' }
+      );
+      await this.bucket.put(r2Key, base64ToUint8Array(result.content));
+    }
 
     const head = await this.bucket.head(r2Key);
     if (head) {
       this.snapshot.set(r2Key, { etag: head.etag, size: head.size });
+    }
+  }
+
+  private async putFileStream(
+    r2Key: string,
+    file: Awaited<ReturnType<typeof openFileStream>>
+  ): Promise<void> {
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const next = await file.chunks.next();
+        if (next.done) {
+          controller.close();
+        } else if (typeof next.value === 'string') {
+          controller.error(new Error('Expected binary file chunks'));
+        } else {
+          controller.enqueue(next.value);
+        }
+      },
+      cancel: () => file.cancel()
+    });
+
+    // R2 needs a known length to accept a stream.
+    const sized = new FixedLengthStream(file.metadata.size);
+    const pipeAbort = new AbortController();
+    body.pipeTo(sized.writable, { signal: pipeAbort.signal }).catch(() => {});
+    try {
+      await this.bucket.put(r2Key, sized.readable);
+    } catch (error) {
+      // put() can reject without reading its body; stop reading the file.
+      pipeAbort.abort(error);
+      throw error;
     }
   }
 
@@ -570,4 +587,8 @@ export class LocalMountSyncManager {
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  return new Uint8Array(Buffer.from(base64, 'base64'));
 }

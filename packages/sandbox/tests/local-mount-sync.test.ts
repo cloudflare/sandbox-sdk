@@ -1227,6 +1227,88 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
+    /** An SSE stream that records cancellation and never ends on its own. */
+    function makeOpenFileStream(events: Record<string, unknown>[]) {
+      const cancel = vi.fn();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const event of events) {
+            controller.enqueue(
+              new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)
+            );
+          }
+        },
+        cancel
+      });
+      return { stream, cancel };
+    }
+
+    it('should read text files whole when the container streams them as text', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
+      // A truncated UTF-8 sequence: decoding and re-encoding it keeps the
+      // length but changes the bytes.
+      const bytes = new Uint8Array([0x66, 0xf0, 0x90, 0x80]);
+      const { stream, cancel } = makeOpenFileStream([
+        {
+          type: 'metadata',
+          mimeType: 'text/plain',
+          size: bytes.byteLength,
+          isBinary: false,
+          encoding: 'utf-8'
+        }
+      ]);
+      fileClient.readFileStream.mockResolvedValueOnce(stream);
+      const readFile = vi.fn(async () => ({
+        success: true,
+        content: btoa(String.fromCharCode(...bytes)),
+        encoding: 'base64'
+      }));
+      Object.assign(fileClient, { readFile });
+      await manager.start();
+
+      emitFileEvent('modify', '/mnt/data/notes.txt');
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
+
+      expect(cancel).toHaveBeenCalled();
+      expect(readFile).toHaveBeenCalledWith(
+        '/mnt/data/notes.txt',
+        'test-session',
+        { encoding: 'base64' }
+      );
+      expect(bucket.put).toHaveBeenCalledWith('notes.txt', bytes);
+
+      await manager.stop();
+    });
+
+    it('should stop reading the container file when the R2 upload fails', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
+      const chunk = { type: 'chunk', data: btoa('x'.repeat(1024)) };
+      const { stream, cancel } = makeOpenFileStream([
+        {
+          type: 'metadata',
+          mimeType: 'application/octet-stream',
+          size: 8192,
+          isBinary: true,
+          encoding: 'base64'
+        },
+        chunk,
+        chunk,
+        chunk,
+        chunk
+      ]);
+      fileClient.readFileStream.mockResolvedValueOnce(stream);
+      bucket.put.mockRejectedValueOnce(new Error('R2 unavailable'));
+      await manager.start();
+
+      emitFileEvent('modify', '/mnt/data/upload.bin');
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
+
+      expect(bucket.put).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalled();
+
+      await manager.stop();
+    });
+
     it('should not upload pending changes after stop', async () => {
       const { bucket, fileClient, manager, emitFileEvent } = setup();
       await manager.start();
