@@ -1117,6 +1117,29 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
+    it('should release the R2 body when a streamed write fails before reading it', async () => {
+      const { bucket, fileClient, manager } = setup(
+        new Map([['large.bin', { body: LARGE_BODY, etag: 'etag-large' }]])
+      );
+      const cancel = vi.fn();
+      bucket.get.mockResolvedValueOnce({
+        key: 'large.bin',
+        etag: 'etag-large',
+        size: LARGE_BODY.length,
+        body: new ReadableStream({ cancel })
+      });
+      fileClient.writeFileStream.mockRejectedValueOnce(
+        new Error('runtime connection closed')
+      );
+
+      await expect(manager.start()).rejects.toThrow(
+        'runtime connection closed'
+      );
+      expect(cancel).toHaveBeenCalled();
+
+      await manager.stop();
+    });
+
     it('should keep base64 writes for large objects on transports without streaming writes', async () => {
       const { fileClient, manager } = setup(
         new Map([['large.bin', { body: LARGE_BODY, etag: 'etag-large' }]]),

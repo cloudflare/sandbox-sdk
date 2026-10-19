@@ -306,11 +306,17 @@ export class LocalMountSyncManager {
       obj.size > STREAM_TO_CONTAINER_THRESHOLD_BYTES &&
       this.client.getTransportMode() === 'rpc'
     ) {
-      await this.client.files.writeFileStream(
-        containerPath,
-        obj.body,
-        this.sessionId
-      );
+      try {
+        await this.client.files.writeFileStream(
+          containerPath,
+          obj.body,
+          this.sessionId
+        );
+      } catch (error) {
+        // A call that fails before reading the body leaves the R2 read open.
+        await obj.body.cancel().catch(() => {});
+        throw error;
+      }
       return;
     }
 
