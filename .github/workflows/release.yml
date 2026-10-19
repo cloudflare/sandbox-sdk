@@ -1,10 +1,13 @@
 name: Release
 
+# v0 maintains the 0.12.x line. main holds 1.0, which owns npm `latest`, the
+# Latest GitHub release and the Docker Hub description. Releases from here are
+# historical: release-identity compares against origin/main, so npm publishes
+# under release-X-Y-Z and leaves `latest` alone.
 on:
   push:
     branches:
-      - main
-      - next
+      - v0
 
 permissions:
   id-token: write
@@ -20,27 +23,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # --- Prerelease channels ---
-  prerelease:
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/next' }}
-    uses: ./.github/workflows/reusable-prerelease.yml
-    permissions:
-      id-token: write
-      contents: read
-      actions: read
-      pull-requests: read
-      packages: write
-    with:
-      channel: next
-      prerelease_identifier: next
-      base_bump: minor
-      worker_name_prefix: sandbox-e2e-test-worker-next
-      publish_docker_alias: true
-    secrets: inherit
-
   # --- Resolve the immutable release identity for this run ---
   release-identity:
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -72,7 +57,7 @@ jobs:
   # --- Compute content hashes for stable releases ---
   hashes:
     needs: release-identity
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -131,7 +116,7 @@ jobs:
   # --- Build (always runs everything on stable release) ---
   build:
     needs: [release-identity, hashes]
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     uses: ./.github/workflows/reusable-build.yml
     with:
       skip_docker: false
@@ -144,7 +129,7 @@ jobs:
   # --- Quality gates (all checks on release) ---
   quality:
     needs: [release-identity, build]
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     uses: ./.github/workflows/reusable-quality.yml
     with:
       run_sdk_tests: true
@@ -157,7 +142,7 @@ jobs:
   # --- E2E tests ---
   e2e:
     needs: [release-identity, hashes, build]
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     permissions:
       contents: read
       actions: read
@@ -174,7 +159,7 @@ jobs:
   # --- Publish release (after all gates pass) ---
   publish-release:
     needs: [release-identity, hashes, build, quality, e2e]
-    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/v0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -281,16 +266,6 @@ jobs:
             --release-root "${{ steps.release-src.outputs.path }}" \
             --mode "${{ needs.release-identity.outputs.release-mode }}"
 
-      - name: Update Docker Hub description
-        uses: peter-evans/dockerhub-description@v4
-        continue-on-error: true
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-          repository: cloudflare/sandbox
-          readme-filepath: ./DOCKER_README.md
-          short-description: ${{ github.event.repository.description }}
-
       - name: Promote public references
         id: promotion
         env:
@@ -308,7 +283,7 @@ jobs:
 
       - name: Stop after promotion PR
         if: steps.promotion.outputs.result == 'pr-created'
-        run: echo "Promotion PR created or updated; Changesets will run after the PR merges to main."
+        run: echo "Promotion PR created or updated; Changesets will run after the PR merges to v0."
 
       - name: Remove release worktree
         if: always()
