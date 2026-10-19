@@ -46,6 +46,7 @@ type OpencodeClientFactory = (options: {
   baseUrl: string;
   fetch: typeof fetch;
   directory?: string;
+  headers?: Record<string, string>;
 }) => OpencodeClient;
 
 // Dynamic import to handle peer dependency
@@ -401,34 +402,28 @@ export async function createOpencode<TClient = OpencodeClient>(
     throw new Error('OpenCode SDK client unavailable.');
   }
 
-  const authorization = basicAuthorization(options?.env);
   const client = clientFactory({
     baseUrl: server.url,
-    fetch: (input, init?) => {
-      const request = new Request(input, init);
-      if (authorization && !request.headers.has('Authorization')) {
-        request.headers.set('Authorization', authorization);
-      }
-      return sandbox.containerFetch(request, server.port);
-    }
+    headers: authorizationHeaders(options?.env),
+    fetch: (input, init?) =>
+      sandbox.containerFetch(new Request(input, init), server.port)
   });
 
   return { client: client as TClient, server };
 }
 
 /**
- * Basic auth header for an OpenCode server started with
- * `OPENCODE_SERVER_PASSWORD` in `env`. OpenCode's default username is
- * `opencode`.
+ * Basic auth for an OpenCode server started with `OPENCODE_SERVER_PASSWORD`
+ * in `env`. OpenCode's default username is `opencode`.
  */
-function basicAuthorization(
+function authorizationHeaders(
   env: Record<string, string> | undefined
-): string | undefined {
+): Record<string, string> | undefined {
   const password = env?.OPENCODE_SERVER_PASSWORD;
   if (!password) return undefined;
   const username = env.OPENCODE_SERVER_USERNAME || 'opencode';
   const bytes = new TextEncoder().encode(`${username}:${password}`);
-  return `Basic ${btoa(String.fromCharCode(...bytes))}`;
+  return { Authorization: `Basic ${btoa(String.fromCharCode(...bytes))}` };
 }
 
 /**

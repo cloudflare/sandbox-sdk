@@ -197,14 +197,18 @@ describe('createOpencode', () => {
   });
 
   it('authenticates the client when env sets OPENCODE_SERVER_PASSWORD', async () => {
-    await createOpencode(mockSandbox as unknown as Sandbox, {
+    const sdk = await vi.importActual<
+      typeof import('@opencode-ai/sdk/v2/client')
+    >('@opencode-ai/sdk/v2/client');
+    vi.mocked(createOpencodeClient).mockImplementationOnce(
+      sdk.createOpencodeClient
+    );
+    const { client } = await createOpencode(mockSandbox as unknown as Sandbox, {
       env: { OPENCODE_SERVER_PASSWORD: 'secret' }
     });
+    mockSandbox.containerFetch.mockResolvedValue(Response.json([]));
 
-    const [{ fetch }] = vi.mocked(createOpencodeClient).mock.lastCall as [
-      { fetch: (input: string) => Promise<Response> }
-    ];
-    await fetch('http://localhost:4096/session');
+    await client.session.list();
 
     const [request] = mockSandbox.containerFetch.mock.lastCall as [Request];
     expect(request.headers.get('Authorization')).toBe(
