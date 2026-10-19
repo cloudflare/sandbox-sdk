@@ -62,7 +62,7 @@
   "overrides": {
     "@cloudflare/vitest-pool-workers": {
       "wrangler": "$wrangler",
-      "miniflare": "5.20261006.0-alpha"
+      "miniflare": "5.20261012.1-beta"
     }
   },
   "license": "Apache-2.0"
