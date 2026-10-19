@@ -1,4 +1,12 @@
-import type { Logger, WSError, WSRequest, WSResponse } from '@repo/shared';
+import type {
+  Logger,
+  WSError,
+  WSRequest,
+  WSResponse,
+  WSServerMessage,
+  WSStreamChunk
+} from '@repo/shared';
+import type { ServerWebSocket } from 'bun';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Router } from '../../src/core/router';
 import {
@@ -6,6 +14,7 @@ import {
   WebSocketAdapter,
   type WSData
 } from '../../src/handlers/ws-adapter';
+import { mocked } from '../test-utils';
 
 // Mock ServerWebSocket
 class MockServerWebSocket {
@@ -277,7 +286,7 @@ describe('WebSocketAdapter', () => {
           controller.close();
         }
       });
-      (mockRouter.route as any).mockResolvedValue(
+      mocked(mockRouter.route).mockResolvedValue(
         new Response(stream, {
           status: 200,
           headers: { 'Content-Type': 'text/event-stream' }
@@ -285,7 +294,7 @@ describe('WebSocketAdapter', () => {
       );
 
       await adapter.onMessage(
-        mockWs as any,
+        mockWs as unknown as ServerWebSocket<WSData>,
         JSON.stringify({
           type: 'request',
           id: 'req-quiet',
@@ -301,10 +310,14 @@ describe('WebSocketAdapter', () => {
       }
 
       const chunks = mockWs
-        .getSentMessages<any>()
-        .filter((m) => m.type === 'stream')
-        .map((m) => m.data);
-      expect(chunks).toEqual(['{"type":"start"}', '', '{"type":"complete"}']);
+        .getSentMessages<WSServerMessage>()
+        .filter((m): m is WSStreamChunk => m.type === 'stream')
+        .map(({ event, data }) => ({ event, data }));
+      expect(chunks).toEqual([
+        { data: '{"type":"start"}' },
+        { event: 'keepalive', data: '' },
+        { data: '{"type":"complete"}' }
+      ]);
     });
 
     it('should ignore cancel from another connection for an active stream', async () => {

@@ -662,10 +662,11 @@ describe('WebSocket Protocol Types', () => {
         const [requestId] = Array.from(
           ((transport as any).pendingRequests as Map<string, unknown>).keys()
         );
-        const chunk = (data: string) =>
+        const chunk = (data: string, event?: string) =>
           (transport as any).handleStreamChunk({
             type: 'stream',
             id: requestId,
+            event,
             data
           });
 
@@ -676,7 +677,7 @@ describe('WebSocket Protocol Types', () => {
         // Keepalives arrive well inside each idle window
         for (let i = 0; i < 5; i++) {
           vi.advanceTimersByTime(80);
-          chunk('');
+          chunk('', 'keepalive');
         }
         vi.advanceTimersByTime(80);
         chunk('{"type":"complete"}');

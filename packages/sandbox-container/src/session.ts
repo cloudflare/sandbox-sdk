@@ -518,6 +518,9 @@ export class Session {
       // (fs.watch on log file would trigger too often during writes)
       let position = 0;
       let exitCodeContent = '';
+      const timeoutMs = options?.timeoutMs;
+      const deadline = timeoutMs ? startTime + timeoutMs : undefined;
+      let timedOut = false;
 
       // Wait until exit code file exists, checking for shell death on each iteration.
       // External kills via killCommand() can terminate the bash wrapper before it writes
@@ -538,6 +541,14 @@ export class Session {
             });
           }
           throw new SessionDestroyedError(this.id);
+        }
+
+        // On timeout, kill the command; killCommand() writes the exit code
+        // file that ends this loop
+        if (deadline !== undefined && !timedOut && Date.now() >= deadline) {
+          timedOut = true;
+          await this.killCommand(commandId);
+          continue;
         }
 
         // Stream any new log content while waiting
@@ -633,8 +644,17 @@ export class Session {
         // Ignore cleanup errors
       }
 
-      // Parse exit code (already read during polling loop)
-      const exitCode = parseInt(exitCodeContent, 10);
+      if (timedOut) {
+        yield {
+          type: 'stderr',
+          data: `Command timed out after ${timeoutMs}ms\n`,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      // Parse exit code (already read during polling loop). A timed-out
+      // command reports 124, as sessionless execution and timeout(1) do.
+      const exitCode = timedOut ? 124 : parseInt(exitCodeContent, 10);
       if (Number.isNaN(exitCode)) {
         throw new Error(`Invalid exit code in file: "${exitCodeContent}"`);
       }

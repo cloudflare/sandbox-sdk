@@ -3,6 +3,7 @@ import {
   isWSError,
   isWSResponse,
   isWSStreamChunk,
+  WS_KEEPALIVE_EVENT,
   type WSMethod,
   type WSRequest,
   type WSResponse,
@@ -756,8 +757,8 @@ export class WebSocketTransport extends BaseTransport {
       this.resetStreamIdleTimeout(chunk.id, pending);
     }
 
-    // An empty chunk is a keepalive from a quiet stream; it carries no event
-    if (chunk.data === '' && chunk.event === undefined) {
+    // A keepalive from a quiet stream only resets the idle timer
+    if (chunk.event === WS_KEEPALIVE_EVENT) {
       return;
     }
 

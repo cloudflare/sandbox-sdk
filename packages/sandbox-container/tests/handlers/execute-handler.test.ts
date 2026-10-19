@@ -311,10 +311,12 @@ describe('ExecuteHandler', () => {
           pid: 4242,
           stdout: '',
           stderr: '',
-          outputListeners: new Set(),
+          outputListeners: new Set<
+            (stream: 'stdout' | 'stderr', data: string) => void
+          >(),
           statusListeners
         }
-      } as any);
+      });
       const handler = new ExecuteHandler(mockProcessService, mockLogger, 5);
 
       const response = await handler.handle(

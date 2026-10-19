@@ -216,5 +216,6 @@ export {
   isWSError,
   isWSRequest,
   isWSResponse,
-  isWSStreamChunk
+  isWSStreamChunk,
+  WS_KEEPALIVE_EVENT
 } from './ws-types.js';
