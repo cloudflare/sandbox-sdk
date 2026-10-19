@@ -23,6 +23,10 @@ updates:
       # Node types follow the Node major the repository runs on.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # TypeScript 7 has no JavaScript API, which `tools/example.ts` uses to read tsconfig
+      # files, so moving to it is a migration, not a version update.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
@@ -32,7 +36,9 @@ updates:
         patterns: ["*"]
 
   # Separate from the root, so a template that fails to update never holds back the
-  # repository's own updates.
+  # repository's own updates. Dependabot can't edit the template's nested miniflare
+  # override, so a Wrangler update here needs it moved to the miniflare that Wrangler
+  # depends on.
   - package-ecosystem: npm
     directory: /templates/openai-agents-api
     schedule:
@@ -40,6 +46,9 @@ updates:
     ignore:
       # Node types follow the Node major the template runs on.
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # vitest majors wait until @cloudflare/vitest-pool-workers accepts them as its peer.
+      - dependency-name: vitest
         update-types: ["version-update:semver-major"]
     groups:
       openai-agents-api:
