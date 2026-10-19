@@ -1,4 +1,6 @@
 // packages/sandbox/tests/opencode/opencode.test.ts
+
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type { Process, ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -192,6 +194,22 @@ describe('createOpencode', () => {
       status: { min: 200, max: 401 },
       timeout: 180_000
     });
+  });
+
+  it('authenticates the client when env sets OPENCODE_SERVER_PASSWORD', async () => {
+    await createOpencode(mockSandbox as unknown as Sandbox, {
+      env: { OPENCODE_SERVER_PASSWORD: 'secret' }
+    });
+
+    const [{ fetch }] = vi.mocked(createOpencodeClient).mock.lastCall as [
+      { fetch: (input: string) => Promise<Response> }
+    ];
+    await fetch('http://localhost:4096/session');
+
+    const [request] = mockSandbox.containerFetch.mock.lastCall as [Request];
+    expect(request.headers.get('Authorization')).toBe(
+      `Basic ${btoa('opencode:secret')}`
+    );
   });
 
   it('should return client and server', async () => {
