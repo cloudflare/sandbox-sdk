@@ -1,6 +1,6 @@
 # Version updates arrive weekly, one grouped pull request per block for minor and patch
-# updates. Each major update gets its own pull request. Security updates are grouped the
-# same way, separately.
+# updates. Each major update gets its own pull request unless a block groups it. Security
+# updates are grouped the same way, separately.
 version: 2
 updates:
   # The root covers every workspace and the root lockfile. The preview app has its own
@@ -90,6 +90,10 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Every Node update, majors included, arrives as one pull request across all
+      # directories, so the images move to a new Node major together.
+      node:
+        patterns: ["node"]
       docker:
         patterns: ["*"]
         update-types: [minor, patch]
