@@ -1529,7 +1529,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('preserves WebSocket preview proxy requests when forwarding', async () => {
+    it('forwards WebSocket preview requests to localhost like other requests', async () => {
       const tcpFetch = vi
         .fn()
         .mockResolvedValue(new Response('preview websocket ok'));
@@ -1539,13 +1539,11 @@ describe('Sandbox - Automatic Session Management', () => {
         .mockReturnValue({ fetch: tcpFetch });
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
 
-      const request = createPreviewWebSocketRequest();
-
-      await sandbox.fetch(request);
+      await sandbox.fetch(createPreviewWebSocketRequest());
 
       expect(tcpFetch).toHaveBeenCalledTimes(1);
+      expect(tcpFetch.mock.calls[0][0]).toBe('http://localhost:8080/ws');
       const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
-      expect(forwardedRequest.url).toBe(request.url);
       expect(forwardedRequest.headers.get('Upgrade')).toBe('websocket');
       expect(forwardedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(forwardedRequest.headers.get('Sec-WebSocket-Key')).toBe(
@@ -1636,6 +1634,58 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(await response.text()).toBe(
         'Container suddenly disconnected, try again'
       );
+    });
+
+    it('answers 502 and logs the original error when the container port fails', async () => {
+      mockCtx.container.running = true;
+      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
+      const portError = Object.assign(
+        new Error('Container port connection closed unexpectedly.'),
+        { retryable: true }
+      );
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: vi.fn().mockRejectedValue(portError) });
+      const { logger } = sandbox as unknown as { logger: Logger };
+      const errorSpy = vi.spyOn(logger, 'error');
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(502);
+      expect(await response.text()).toBe(
+        'Could not reach port 8080 in the container'
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Preview request to container port failed',
+        portError,
+        { port: 8080, method: 'GET' }
+      );
+    });
+
+    it('returns stale when the runtime goes inactive during a container port failure', async () => {
+      mockCtx.container.running = true;
+      let runtimeActive = true;
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        const state = activePreviewStorageState();
+        if (key === 'currentRuntimeIdentity') {
+          return runtimeActive ? state.currentRuntimeIdentity : null;
+        }
+        return state[key as keyof typeof state] ?? null;
+      });
+      const tcpFetch = vi.fn().mockImplementation(async () => {
+        runtimeActive = false;
+        throw new Error('Container port connection closed unexpectedly.');
+      });
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
     });
 
     it('rejects preview proxy requests without durable authorization', async () => {

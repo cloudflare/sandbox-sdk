@@ -3357,6 +3357,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Explicit container-start hook for the RPC transport.
    *
+   * The control connection calls this hook every time it connects, including
+   * when it reconnects after an idle disconnect. A running, healthy container
+   * is left alone, as in {@link containerFetch}: the base class runs
+   * `onStart()` on every `startAndWaitForPorts()`, and `onStart()` treats the
+   * container as new, recording a new runtime identity and dropping quick
+   * tunnels from storage.
+   *
    * Runs `startAndWaitForPorts` under a short instance-get budget
    * ({@link RPC_START_INSTANCE_GET_TIMEOUT_MS}) so a single attempt fails fast
    * under capacity pressure — the base class throws the classifiable
@@ -3376,6 +3383,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async startContainerForRPC(): Promise<void> {
     try {
+      const state = await this.getState();
+      if (state.status === 'healthy' && this.ctx.container?.running !== false) {
+        return;
+      }
       await this.startAndWaitForPorts({
         ports: 3000,
         cancellationOptions: {
@@ -3713,6 +3724,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (result.status === 'failed') {
+      if (!(await this.currentRuntime.isActive(runtime))) {
+        return this.stalePreviewURLResponse();
+      }
+
+      // A failure on the container port, such as a closed connection or no
+      // listener, belongs to the app behind the preview. Answer here, as a
+      // reverse proxy does, so the Worker does not report it as a platform
+      // interruption and the original error is still logged.
+      this.logger.error(
+        'Preview request to container port failed',
+        result.error instanceof Error
+          ? result.error
+          : new Error(String(result.error)),
+        { port, method: request.method }
+      );
+      return new Response(`Could not reach port ${port} in the container`, {
+        status: 502
+      });
+    }
+
     return result.response;
   }
 
@@ -3732,18 +3764,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     headers.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
     headers.set('X-Sandbox-Name', this.sandboxName ?? sandboxId);
 
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader?.toLowerCase() === 'websocket') {
-      // WebSocket upgrade requests keep the original Request object so the
-      // Workers runtime preserves upgrade semantics. Preview forwarding routes
-      // by the explicit port argument, while the request URL still provides
-      // the path and query.
-      return new Request(request, {
-        headers,
-        redirect: 'manual'
-      });
-    }
-
+    // WebSocket upgrades take the same localhost URL as other requests, so the
+    // app sees one Host. The Upgrade header carries the upgrade semantics.
     return new Request(proxyUrl, {
       method: request.method,
       headers,
