@@ -1,7 +1,11 @@
 name: PR Privileged
 
+# GitHub runs pull_request_target workflows only from the default branch, so this maintenance
+# branch runs on pull_request. That runs this branch's own workflow, and GitHub gives secrets only
+# to PRs from branches in this repository.
 on:
-  pull_request_target:
+  pull_request:
+    branches: [v0-preview]
     types: [opened, synchronize, reopened, labeled]
 
 permissions: {}
@@ -14,7 +18,7 @@ env:
   CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
 
 jobs:
-  # --- Authorization gate (includes label management for fork PRs) ---
+  # --- Authorization gate ---
   policy:
     runs-on: ubuntu-latest
     permissions:
@@ -24,45 +28,6 @@ jobs:
       authorized: ${{ steps.check.outputs.authorized }}
       run_privileged: ${{ steps.check.outputs.run_privileged }}
     steps:
-      - name: Generate app token for label management
-        id: app-token
-        if: >
-          github.event.action == 'synchronize' &&
-          github.event.pull_request.head.repo.full_name != github.repository
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
-      - name: Remove ok-to-test label on new pushes (fork PRs only)
-        if: >
-          github.event.action == 'synchronize' &&
-          github.event.pull_request.head.repo.full_name != github.repository
-        uses: actions/github-script@v8
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                name: 'ok-to-test'
-              });
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body: 'New commits pushed -- `ok-to-test` label removed. A maintainer must re-review and re-apply the label to run the full CI pipeline.'
-              });
-            } catch (error) {
-              if (error.status === 404) {
-                core.info('ok-to-test label not present — nothing to remove');
-              } else {
-                throw error;
-              }
-            }
-
       - name: Check authorization
         id: check
         env:
@@ -110,17 +75,10 @@ jobs:
             exit 0
           fi
 
-          # Fork PRs with privileged changes need ok-to-test label
-          LABELS=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.labels[].name')
-          if echo "$LABELS" | grep -qx 'ok-to-test'; then
-            echo "authorized=true" >> $GITHUB_OUTPUT
-            echo "run_privileged=true" >> $GITHUB_OUTPUT
-            echo "::notice::Authorized — ok-to-test label verified via API"
-          else
-            echo "authorized=false" >> $GITHUB_OUTPUT
-            echo "run_privileged=false" >> $GITHUB_OUTPUT
-            echo "::notice::Not authorized — fork PR without ok-to-test label"
-          fi
+          # Fork PRs get no secrets on pull_request, so privileged CI cannot run for them
+          echo "authorized=false" >> $GITHUB_OUTPUT
+          echo "run_privileged=false" >> $GITHUB_OUTPUT
+          echo "::notice::Not authorized — fork PR with code changes"
 
   # --- Change detection (only when authorized) ---
   detect-changes:
@@ -142,6 +100,7 @@ jobs:
       # Checkout base branch (trusted) for filter definitions
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
       # Path filter reads trusted .github/path-filters.yml + uses GitHub API for file list
@@ -472,7 +431,7 @@ jobs:
           echo "publish-preview: ${{ needs.publish-preview.result }}"
           # Gate 1: Authorization
           if [[ "${{ needs.policy.outputs.authorized }}" != "true" ]]; then
-            echo "::error::Fork PR requires 'ok-to-test' label. A maintainer must review the code and add the label to run the full CI pipeline."
+            echo "::error::Fork PRs cannot run privileged CI on this branch. A maintainer must push the changes to a branch in this repository."
             exit 1
           fi
 
