@@ -262,9 +262,10 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      this.logger.error('Failed to create file', toError(error), {
-        path: operation.path,
-        error: errorMessage
+      // applyDiff errors quote patch lines, which can hold file contents.
+      // The caller still gets the full error.
+      this.logger.error('Failed to create file', undefined, {
+        path: operation.path
       });
       throw error;
     }
@@ -349,9 +350,10 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      this.logger.error('Failed to update file', toError(error), {
-        path: operation.path,
-        error: errorMessage
+      // applyDiff errors quote patch lines, which can hold file contents.
+      // The caller still gets the full error.
+      this.logger.error('Failed to update file', undefined, {
+        path: operation.path
       });
       throw error;
     }
