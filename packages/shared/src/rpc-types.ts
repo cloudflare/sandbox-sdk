@@ -81,9 +81,9 @@ export interface WriteFileOptions {
   encoding?: string;
   /**
    * Create a new file readable only by its owner (mode 0600), and fail if the
-   * path already exists. Containers from before this option ignore it and
-   * create the file with the default mode, so a caller that needs mode 0600
-   * must still chmod after writing.
+   * path already exists. A container image without this option ignores it
+   * and creates the file with the default mode, so a caller that needs mode
+   * 0600 still chmods after writing.
    */
   ownerOnly?: boolean;
 }

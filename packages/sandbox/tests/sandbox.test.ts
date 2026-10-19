@@ -3932,7 +3932,7 @@ describe('Sandbox durable object behavior', () => {
         { ownerOnly: true }
       );
       const passwordFilePath = vi.mocked(files.writeFile).mock.calls[0][0];
-      // Containers that predate ownerOnly ignore it, so the chmod stays.
+      // The chmod covers container images that ignore ownerOnly.
       expect(mounts.chmodOwnerOnly).toHaveBeenCalledWith(passwordFilePath);
     });
 

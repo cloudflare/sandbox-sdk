@@ -4,8 +4,8 @@ import type { S3FSHost } from './host';
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
 // s3fs refuses support files that other users can read. Create them with mode
-// 0600 so the password file is never readable while it is being written, and
-// still chmod for containers that predate `ownerOnly` and ignore it.
+// 0600 so the password file is never readable while it is being written. The
+// chmod covers container images that ignore `ownerOnly`.
 async function writeOwnerOnlyFile(
   host: S3FSHost,
   operation: string,
