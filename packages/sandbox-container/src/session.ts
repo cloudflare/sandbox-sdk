@@ -1410,14 +1410,16 @@ export class Session {
         try {
           const exists = await Bun.file(exitCodeFile).exists();
           if (exists) {
+            const exitCode = await Bun.file(exitCodeFile).text();
+            if (resolved) return;
             resolved = true;
             watcher.close();
             clearInterval(pollInterval);
-            const exitCode = await Bun.file(exitCodeFile).text();
             resolve(parseInt(exitCode.trim(), 10));
           }
         } catch (error) {
-          // Ignore polling errors, watcher or next poll will catch it
+          // Ignore polling errors; the watcher, the next poll, or shell exit
+          // will settle the wait.
         }
       }, 50); // Poll every 50ms as fallback
 

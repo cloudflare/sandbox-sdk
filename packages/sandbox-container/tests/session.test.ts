@@ -199,6 +199,42 @@ describe('Session', () => {
       }
     });
 
+    it('rejects when the shell dies after a failed exit-code read', async () => {
+      // destroy() can delete the exit code file between the poll's existence
+      // check and its read.
+      const realFile = Bun.file;
+      let exitChecks = 0;
+      const fileSpy = spyOn(Bun, 'file').mockImplementation(((
+        path: string | URL,
+        options?: BlobPropertyBag
+      ) => {
+        const file = realFile(path, options);
+        if (typeof path !== 'string' || !path.endsWith('.exit')) {
+          return file;
+        }
+        return Object.assign(Object.create(file), {
+          exists: async () => exitChecks++ > 0,
+          text: async () => {
+            throw new Error('ENOENT: no such file or directory');
+          }
+        });
+      }) as typeof Bun.file);
+
+      try {
+        const outcome = await Promise.race([
+          session.exec('sleep 0.3; exit 7').then(
+            () => 'resolved',
+            () => 'rejected'
+          ),
+          Bun.sleep(2000).then(() => 'pending')
+        ]);
+
+        expect(outcome).toBe('rejected');
+      } finally {
+        fileSpy.mockRestore();
+      }
+    });
+
     it('should capture stderr correctly', async () => {
       const result = await session.exec('echo "Error message" >&2');
 
