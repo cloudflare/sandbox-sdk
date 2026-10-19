@@ -17,7 +17,8 @@ export {
   configureR2EgressOutbound,
   configureS3CredentialProxyOutbound,
   type EgressContainerState,
-  type MountOutboundHost
+  type MountOutboundHost,
+  releaseRestoredMountRoutes
 } from './outbound';
 export {
   CONTAINER_PROXY_CLASS_NAME,
@@ -27,6 +28,7 @@ export {
   S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST,
   S3_CREDENTIAL_PROXY_HOST
 } from './outbound/container-proxy';
+export { RestoredMountRoutes } from './outbound/restored-routes';
 export { MountRegistry } from './registry';
 export {
   createDisableExpectHeaderFile,

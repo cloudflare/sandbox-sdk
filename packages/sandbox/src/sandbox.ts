@@ -111,7 +111,8 @@ import {
   configureGitAuthInterceptor,
   type EgressContainerState,
   installSDKOutboundHandlers,
-  type MountOutboundHost
+  type MountOutboundHost,
+  RestoredMountRoutes
 } from './storage-mount';
 import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
 import {
@@ -1101,6 +1102,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private bucketMounts: BucketMountService;
+  private restoredMountRoutes: RestoredMountRoutes;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
   private previewService: PreviewService;
@@ -1210,6 +1212,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       installSDKOutboundHandlers(new.target);
     }
     super(ctx, env);
+    this.restoredMountRoutes = RestoredMountRoutes.fromContainer(this);
 
     const envObj = env as Record<string, unknown>;
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
@@ -1860,6 +1863,8 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.logger.debug('Sandbox started', {
       replacementStartTransitionCompleted
     });
+    // A new container has none of the previous container's s3fs mounts.
+    await this.bucketMounts.releaseRestoredRoutes();
   }
 
   override async start(
@@ -3228,6 +3233,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private getMountOutboundHost(): MountOutboundHost {
     return {
       ctx: this.ctx as EgressContainerState,
+      restoredMountRoutes: this.restoredMountRoutes,
       enableInternet: this.enableInternet,
       logger: this.logger,
       setOutboundByHost: (host, method, params) =>

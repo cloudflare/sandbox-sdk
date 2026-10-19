@@ -2,7 +2,8 @@ import type { Logger } from '@repo/shared';
 import {
   configureR2EgressOutbound,
   configureS3CredentialProxyOutbound,
-  type MountOutboundHost
+  type MountOutboundHost,
+  releaseRestoredMountRoutes
 } from './outbound';
 import {
   buildR2EgressParams,
@@ -153,6 +154,8 @@ export async function cleanupBucketMountsForStop(
   host: BucketMountLifecycleCleanupHost
 ): Promise<void> {
   return host.runMountOperation(async () => {
+    await releaseRestoredMountRoutes(host.getOutboundHost(), host.registry);
+
     let hadR2EgressMount = false;
     let hadCredentialProxyMount = false;
     for (const [, mountInfo] of host.registry) {
