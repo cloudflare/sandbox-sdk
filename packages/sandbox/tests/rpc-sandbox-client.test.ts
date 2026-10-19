@@ -404,6 +404,36 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(FileNotFoundError);
   });
 
+  it.each([
+    'TUNNEL_RUN_CONFLICT',
+    'TUNNEL_START_ERROR',
+    'CLOUDFLARED_NOT_FOUND'
+  ])('keeps the container tunnel error code %s', async (code) => {
+    // An unregistered code falls through to transport classification, so
+    // a tunnel failure would surface as a dropped connection.
+    const { RPCTransportError, SandboxError } = await loadErr();
+    const err = Object.assign(new Error('tunnel failed'), {
+      code,
+      details: { port: 8080 }
+    });
+
+    const thrown = (() => {
+      try {
+        translateRPCError(err);
+      } catch (e) {
+        return e;
+      }
+    })();
+
+    expect(thrown).toBeInstanceOf(SandboxError);
+    expect(thrown).not.toBeInstanceOf(RPCTransportError);
+    expect(thrown).toMatchObject({
+      code,
+      message: 'tunnel failed',
+      context: { port: 8080 }
+    });
+  });
+
   it('prefers propagated `code` over a JSON-encoded message body', async () => {
     // If a container ever sets both, the propagated property wins — it's the
     // authoritative source for new containers.

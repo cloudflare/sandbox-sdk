@@ -19,7 +19,7 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { ErrorCode, RPCTransportError, SandboxError } from '../../src/errors';
 import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
@@ -57,6 +57,24 @@ function createDisposedRPCError(): RPCTransportError {
       kind: 'session_disposed',
       originalMessage: 'RPC session was shut down by disposing the main stub',
       errorName: 'Error'
+    },
+    timestamp: '2026-06-22T12:00:00.000Z'
+  });
+}
+
+function createRunConflictError(context: {
+  activeRunId: string;
+  activeTunnelId?: string;
+}): SandboxError {
+  return new SandboxError({
+    code: ErrorCode.TUNNEL_RUN_CONFLICT,
+    message: 'Port 8080 already has an active tunnel run',
+    httpStatus: 409,
+    context: {
+      tunnelId: 'quick-new',
+      runId: 'run-new',
+      port: 8080,
+      ...context
     },
     timestamp: '2026-06-22T12:00:00.000Z'
   });
@@ -589,6 +607,120 @@ describe('tunnel service > get', () => {
     expect(Object.keys(final ?? {})).toEqual(
       expect.arrayContaining(['8080', '8081'])
     );
+  });
+
+  it('stops an orphaned run holding the port and starts a new one', async () => {
+    const { client, storage, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun
+      .mockRejectedValueOnce(
+        createRunConflictError({
+          activeRunId: 'run-orphan',
+          activeTunnelId: 'quick-orphan'
+        })
+      )
+      .mockImplementationOnce(async (request) =>
+        ensureQuickResult(
+          request,
+          makeRecord({ id: request.tunnelId, port: request.port })
+        )
+      );
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: 'quick-orphan',
+      runId: 'run-orphan'
+    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const stored = await storage.get('tunnels');
+    expect(stored).toEqual({ '8080': info });
+  });
+
+  it('surfaces a port conflict from an older container without stopping a run', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun.mockRejectedValue(
+      createRunConflictError({ activeRunId: 'run-orphan' })
+    );
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      code: ErrorCode.TUNNEL_RUN_CONFLICT
+    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run-orphan' })
+    );
+  });
+
+  it('does not reclaim the port from its own run on a conflict', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
+      throw createRunConflictError({
+        activeRunId: request.runId,
+        activeTunnelId: request.tunnelId
+      });
+    });
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      code: ErrorCode.TUNNEL_RUN_CONFLICT
+    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the started run when provisioning fails after the spawn', async () => {
+    // Otherwise cloudflared keeps holding the port with no stored record,
+    // and every later get() for the port conflicts with it.
+    const storage = makeStorage();
+    (storage.transaction as StorageTransactionMock).mockRejectedValueOnce(
+      new Error('storage unavailable')
+    );
+    const { client, handler } = makeHandler({ storage });
+    mockEnsureQuick(client.tunnels, (tunnelId, port) =>
+      makeRecord({ id: tunnelId, port })
+    );
+    client.tunnels.stopTunnelRun.mockRejectedValueOnce(
+      new Error('stop failed')
+    );
+
+    // A failed cleanup must not replace the provisioning error.
+    await expect(handler.get(8080)).rejects.toThrow('storage unavailable');
+
+    const [started] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: started.tunnelId,
+      runId: started.runId
+    });
+  });
+
+  it('stops the started run even when invalidating its record fails', async () => {
+    const storage = makeStorage();
+    const transaction = storage.transaction as StorageTransactionMock;
+    const commit = transaction.getMockImplementation();
+    if (!commit) throw new Error('expected a storage transaction mock');
+    transaction
+      .mockImplementationOnce(commit)
+      .mockRejectedValueOnce(new Error('storage unavailable'));
+    // The lifetime check fails only after the record is committed.
+    const assertCurrent = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new SandboxLifetimeChangedError());
+    const { client, handler } = makeHandler({
+      ...makeFences({ currentLifetime: { assertCurrent } }),
+      storage
+    });
+    mockEnsureQuick(client.tunnels, (tunnelId, port) =>
+      makeRecord({ id: tunnelId, port })
+    );
+
+    await expect(handler.get(8080)).rejects.toThrow();
+
+    expect(transaction).toHaveBeenCalledTimes(2);
+    const [started] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledExactlyOnceWith({
+      tunnelId: started.tunnelId,
+      runId: started.runId
+    });
   });
 
   it('clears the inflight slot when the spawn fails', async () => {
