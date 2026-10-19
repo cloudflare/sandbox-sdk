@@ -104,4 +104,8 @@ export class BackupService {
   async cleanupArchive(archivePath: string): Promise<ServiceResult<void>> {
     return this.transferOperations.cleanupArchive(archivePath);
   }
+
+  static normalizeMksquashfsPattern(pattern: string): string | null {
+    return ArchiveOperations.normalizeMksquashfsPattern(pattern);
+  }
 }

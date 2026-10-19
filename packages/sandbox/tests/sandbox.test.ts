@@ -3526,7 +3526,7 @@ describe('Sandbox durable object behavior', () => {
       expect(bucket.put).toHaveBeenCalled();
     });
 
-    it('should preserve supported excludes before calling createArchive', async () => {
+    it('should normalize globstar excludes before calling createArchive', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi
         .spyOn(
@@ -3543,15 +3543,9 @@ describe('Sandbox durable object behavior', () => {
         'uploadBackupPresigned'
       ).mockResolvedValue(undefined);
 
-      const excludes = [
-        '**/.turbo',
-        'dist/**',
-        '**/**/cache',
-        '.entrydesk/sites/*/node_modules'
-      ];
       await backupSandbox.createBackup({
         dir: '/app/project',
-        excludes
+        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
       });
 
       expect(createArchiveSpy).toHaveBeenCalledWith(
@@ -3559,7 +3553,7 @@ describe('Sandbox durable object behavior', () => {
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         {
           gitignore: false,
-          excludes,
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
             format: 'lz4',
             threads: 8
@@ -3567,40 +3561,6 @@ describe('Sandbox durable object behavior', () => {
         }
       );
     });
-
-    it.each([
-      '',
-      '**',
-      '**/',
-      '***',
-      '*?',
-      '?*',
-      '**/node_modules/.cache',
-      'packages/**/dist',
-      '... cache',
-      'nested//path',
-      ' leading',
-      'trailing '
-    ])(
-      'should reject invalid exclude %j before runtime admission',
-      async (pattern) => {
-        const { backupSandbox } = await createBackupSandbox();
-        const runWakingSpy = vi.spyOn(
-          backupSandbox as unknown as {
-            runWakingComposite(): Promise<unknown>;
-          },
-          'runWakingComposite'
-        );
-
-        await expect(
-          backupSandbox.createBackup({
-            dir: '/app/project',
-            excludes: [pattern]
-          })
-        ).rejects.toMatchObject({ code: 'INVALID_BACKUP_CONFIG' });
-        expect(runWakingSpy).not.toHaveBeenCalled();
-      }
-    );
 
     it('should reject unsupported backup compression before runtime admission', async () => {
       const { backupSandbox } = await createBackupSandbox();

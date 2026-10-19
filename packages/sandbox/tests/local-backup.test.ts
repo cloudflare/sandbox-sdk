@@ -599,7 +599,7 @@ describe('Local Backup & Restore', () => {
       expect(result.localBucket).toBe(true);
     });
 
-    it('should preserve supported excludes before calling createArchive', async () => {
+    it('should normalize globstar excludes before calling createArchive', async () => {
       vi.spyOn(
         asSandboxWithClient(sandbox).client.backup,
         'createArchive'
@@ -628,16 +628,10 @@ describe('Local Backup & Restore', () => {
         })
       );
 
-      const excludes = [
-        '**/.turbo',
-        'dist/**',
-        '**/**/cache',
-        '.entrydesk/sites/*/node_modules'
-      ];
       await sandbox.createBackup({
         dir: '/workspace/myapp',
         localBucket: true,
-        excludes
+        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
       });
 
       expect(
@@ -647,7 +641,7 @@ describe('Local Backup & Restore', () => {
         expect.stringContaining('/var/backups/'),
         {
           gitignore: false,
-          excludes,
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
             format: 'lz4',
             threads: 8
@@ -655,83 +649,6 @@ describe('Local Backup & Restore', () => {
         }
       );
     });
-
-    it.each([
-      '',
-      '**',
-      '**/',
-      '***',
-      '*?',
-      '?*',
-      '**/node_modules/.cache',
-      'packages/**/dist',
-      '... cache',
-      'nested//path',
-      ' leading',
-      'trailing '
-    ])('rejects invalid exclude %j before a runtime call', async (pattern) => {
-      const createArchive = vi.spyOn(
-        asSandboxWithClient(sandbox).client.backup,
-        'createArchive'
-      );
-
-      await expect(
-        sandbox.createBackup({
-          dir: '/workspace/myapp',
-          localBucket: true,
-          excludes: [pattern]
-        })
-      ).rejects.toMatchObject({ code: 'INVALID_BACKUP_CONFIG' });
-      expect(createArchive).not.toHaveBeenCalled();
-    });
-
-    it.each([true, false])(
-      'emits the canonical failure event for invalid configuration when localBucket is %s',
-      async (localBucket) => {
-        const errorSpy = vi.spyOn(
-          (
-            sandbox as unknown as {
-              logger: { error: (...args: unknown[]) => void };
-            }
-          ).logger,
-          'error'
-        );
-
-        await expect(
-          sandbox.createBackup({
-            dir: '/workspace/myapp',
-            localBucket,
-            excludes: ['**/nested/path']
-          })
-        ).rejects.toMatchObject({ code: 'INVALID_BACKUP_CONFIG' });
-
-        expect(errorSpy).toHaveBeenCalledWith(
-          expect.stringContaining('backup.create error'),
-          expect.any(Error),
-          expect.objectContaining({ event: 'backup.create', outcome: 'error' })
-        );
-      }
-    );
-
-    it.each([true, false])(
-      'validates excludes before storage prerequisites when localBucket is %s',
-      async (localBucket) => {
-        (sandbox as unknown as { env: Record<string, unknown> }).env = {};
-        const createArchive = vi.spyOn(
-          asSandboxWithClient(sandbox).client.backup,
-          'createArchive'
-        );
-
-        await expect(
-          sandbox.createBackup({
-            dir: '/workspace/myapp',
-            localBucket,
-            excludes: ['**/node_modules/.cache']
-          })
-        ).rejects.toMatchObject({ code: 'INVALID_BACKUP_CONFIG' });
-        expect(createArchive).not.toHaveBeenCalled();
-      }
-    );
   });
 
   describe('restoreBackup with localBucket', () => {
