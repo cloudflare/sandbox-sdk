@@ -61,10 +61,16 @@ vi.mock('@cloudflare/containers', () => {
     ctx: unknown;
     env: unknown;
     sleepAfter: string | number = '10m';
+    // The real base constructor validates persisted outbound overrides
+    // against this registry entry before the subclass constructor body runs.
+    outboundHandlersAtConstruction: Record<string, unknown> | undefined;
 
     constructor(ctx: unknown, env: unknown) {
       this.ctx = ctx;
       this.env = env;
+      this.outboundHandlersAtConstruction = testOutboundHandlersRegistry.get(
+        this.constructor.name
+      );
     }
 
     async fetch(): Promise<Response> {
@@ -883,6 +889,34 @@ describe('Sandbox R2 egress mounts', () => {
 
     expect(mockCtx.container.interceptOutboundHttp).not.toHaveBeenCalled();
     expect(mockCtx.exports.ContainerProxy).not.toHaveBeenCalled();
+  });
+
+  it('registers mount handlers before the base constructor restores outbound overrides', () => {
+    class RestartedSandbox extends Sandbox {}
+    const sandbox = new RestartedSandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    expect(
+      (sandbox as unknown as { outboundHandlersAtConstruction?: object })
+        .outboundHandlersAtConstruction
+    ).toEqual({
+      r2EgressMount: expect.any(Function),
+      s3CredentialProxyMount: expect.any(Function)
+    });
+  });
+
+  it('does not register mount handlers when ContainerProxy is not exported', () => {
+    class NoProxySandbox extends Sandbox {}
+    new NoProxySandbox(
+      createMockCtx({
+        includeContainerProxy: false
+      }) as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    expect(NoProxySandbox.outboundHandlers).toBeUndefined();
   });
 
   describe('handler prefix translation', () => {

@@ -277,6 +277,11 @@ const CONTAINER_PROXY_CLASS_NAME = 'ContainerProxy';
 const S3_CREDENTIAL_PROXY_HOST = 's3-credential-proxy.internal';
 const S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST = 's3-credential-proxy.sandbox.test';
 
+const SDK_OUTBOUND_HANDLERS = {
+  r2EgressMount: r2EgressHandler,
+  s3CredentialProxyMount: s3CredentialProxyHandler
+};
+
 class ContainerProxyOutboundTarget extends Container {}
 
 Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
@@ -285,10 +290,7 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
 
 (
   ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
-).outboundHandlers = {
-  r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
-};
+).outboundHandlers = SDK_OUTBOUND_HANDLERS;
 
 /**
  * SDK-level ContainerProxy that directly dispatches SDK-internal mount hosts
@@ -1279,6 +1281,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
+    // The base constructor restores persisted outbound overrides and drops any
+    // whose method is not registered for the concrete class. Register the SDK
+    // mount handlers first so bucket mounts keep their egress route when the
+    // Durable Object restarts under a running container. Registered handlers
+    // also make the base class apply and persist outbound interception, which
+    // needs the ContainerProxy export that bucket mounts already require.
+    if ((ctx as EgressContainerState).exports?.ContainerProxy) {
+      (new.target as unknown as OutboundHandlerRegistry).outboundHandlers =
+        SDK_OUTBOUND_HANDLERS;
+    }
     super(ctx, env);
 
     const envObj = env as Record<string, unknown>;
@@ -7813,13 +7825,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Register r2EgressMount on the concrete subclass's local registry so
-    // setOutboundByHost's validateOutboundHandlerMethodName check passes. The
-    // actual dispatch is handled by the SDK ContainerProxy.fetch() override,
-    // which directly calls r2EgressHandler by hostname without going through
-    // the registry (which is NOT shared across execution contexts).
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { r2EgressMount: r2EgressHandler };
+    // The constructor registered r2EgressMount for setOutboundByHost's
+    // validation. Dispatch happens in the SDK ContainerProxy.fetch() override,
+    // which calls r2EgressHandler by hostname without the registry (which is
+    // not shared across execution contexts).
     if (Object.keys(params.buckets).length > 0) {
       await this.setOutboundByHost<R2EgressParams>(
         'r2.internal',
@@ -7878,11 +7887,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST
     ];
 
-    // Register s3CredentialProxyMount on the concrete subclass's local registry
-    // so setOutboundByHost's validateOutboundHandlerMethodName check passes.
-    // Actual dispatch is handled by the SDK ContainerProxy.fetch() override.
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { s3CredentialProxyMount: s3CredentialProxyHandler };
+    // The constructor registered s3CredentialProxyMount for setOutboundByHost's
+    // validation. Dispatch happens in the SDK ContainerProxy.fetch() override.
     if (Object.keys(params.mounts).length > 0) {
       for (const host of hosts) {
         await this.setOutboundByHost<S3CredentialProxyParams>(
