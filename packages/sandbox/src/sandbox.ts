@@ -3195,6 +3195,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.defaultSessionInit = null;
 
+    // Leave an RPC connection that is still being established alone. When
+    // the platform refuses a container start, the base class reports a stop
+    // on its next alarm even though no container ran. The connection attempt
+    // keeps retrying the start within its own budget and reaches the
+    // container that does come up; tearing it down would fail the calls
+    // queued behind it. Decide before the first await so an attempt that
+    // connects during the cleanup below is left alone too.
+    const disconnectClient =
+      this.transport !== 'rpc' || this.client.isWebSocketConnected();
+
     await this.currentRuntime.clear();
     await this.clearActivePreviewPorts();
 
@@ -3212,13 +3222,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // interruption instead of a generic disposal string. Thread the platform's
     // exit code / stop reason through so a trace can distinguish an OOM kill
     // (137) or signalled eviction (143 / 'runtime_signal') from a clean exit.
-    this.client.disconnect(
-      this.buildDisconnectCause(
-        'runtime_replaced',
-        'The sandbox container stopped while the operation was pending.',
-        params
-      )
-    );
+    if (disconnectClient) {
+      this.client.disconnect(
+        this.buildDisconnectCause(
+          'runtime_replaced',
+          'The sandbox container stopped while the operation was pending.',
+          params
+        )
+      );
+    }
 
     await this.releaseRestoredMountRoutes();
 
