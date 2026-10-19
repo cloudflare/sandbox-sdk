@@ -1,4 +1,4 @@
-import { errorJson, resolveWorkspacePath, sseToByteStream } from '../helpers';
+import { errorJson, openSseByteStream, resolveWorkspacePath } from '../helpers';
 import type { WriteResponse } from '../types';
 import { type BridgeApp, getSandbox, getSandboxNs } from './common';
 
@@ -39,20 +39,25 @@ export function registerFileRoutes(
     );
     try {
       const stream = await sandbox.readFileStream(resolvedPath);
-      return new Response(sseToByteStream(stream), {
+      return new Response(await openSseByteStream(stream), {
         status: 200,
         headers: { 'Content-Type': 'application/octet-stream' }
       });
     } catch (err) {
       const code = (err as { code?: string }).code;
-      if (code === 'FILE_NOT_FOUND') {
+      const msg = err instanceof Error ? err.message : String(err);
+      // A missing file arrives as an SSE error event, which carries only the
+      // container's "File not found: <path>" message and no error code.
+      if (
+        code === 'FILE_NOT_FOUND' ||
+        msg.toLowerCase().includes('file not found')
+      ) {
         return errorJson(
           `File not found: ${resolvedPath}`,
           'workspace_read_not_found',
           404
         );
       }
-      const msg = err instanceof Error ? err.message : String(err);
       return errorJson(`read failed: ${msg}`, 'exec_transport_error', 502);
     }
   });
