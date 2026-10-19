@@ -20,6 +20,9 @@ updates:
       # Examples pin the published package together with their donor image tag, and
       # `npm run example -- set-version` moves both after a stable release.
       - dependency-name: "@cloudflare/sandbox"
+      # Node types follow the Node major the repository runs on.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
@@ -34,6 +37,10 @@ updates:
     directory: /templates/openai-agents-api
     schedule:
       interval: weekly
+    ignore:
+      # Node types follow the Node major the template runs on.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       openai-agents-api:
         patterns: ["*"]
