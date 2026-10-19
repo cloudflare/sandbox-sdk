@@ -295,8 +295,9 @@ describe('TunnelService > ensureTunnelRun', () => {
 
   it('rejects a different run on the same port', async () => {
     const service = new TunnelService(mockLogger);
+    const first = quickRequest();
     await withFakeCloudflared(QUICK_BANNER, () =>
-      service.ensureTunnelRun(quickRequest())
+      service.ensureTunnelRun(first)
     );
 
     const second = await service.ensureTunnelRun(
@@ -306,6 +307,11 @@ describe('TunnelService > ensureTunnelRun', () => {
     expect(second.success).toBe(false);
     if (second.success) return;
     expect(second.error.code).toBe('TUNNEL_RUN_CONFLICT');
+    // The SDK stops a run it lost track of using these ids.
+    expect(second.error.details).toMatchObject({
+      activeRunId: first.runId,
+      activeTunnelId: first.tunnelId
+    });
     expect(fakeProcs).toHaveLength(1);
   });
 

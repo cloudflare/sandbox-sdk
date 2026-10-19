@@ -506,11 +506,37 @@ export class TunnelService implements TunnelsHandler {
             runId
           );
         }
+        await this.#stopAbandonedQuickRun(lease.tunnels, port, {
+          tunnelId,
+          runId
+        });
         throw error;
       } finally {
         hold.release();
       }
     });
+  }
+
+  /**
+   * Stop a quick tunnel run that provisioning is giving up on, so its
+   * cloudflared does not keep holding the port without a stored record.
+   * Best effort: the run may never have started, or may have died with a
+   * replaced runtime.
+   */
+  async #stopAbandonedQuickRun(
+    tunnels: SandboxTunnelsAPI,
+    port: number,
+    run: { tunnelId: string; runId: string }
+  ): Promise<void> {
+    try {
+      await tunnels.stopTunnelRun(run);
+    } catch (error) {
+      this.#host.logger.warn('tunnel.get: abandoned run cleanup failed', {
+        port,
+        ...run,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   async #provisionNamedTunnel(

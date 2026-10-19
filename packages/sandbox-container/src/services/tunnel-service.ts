@@ -122,7 +122,8 @@ export class TunnelService {
           tunnelId: request.tunnelId,
           runId: request.runId,
           port: request.port,
-          activeRunId: existingPort.request.runId
+          activeRunId: existingPort.request.runId,
+          activeTunnelId: existingPort.request.tunnelId
         }
       });
     }

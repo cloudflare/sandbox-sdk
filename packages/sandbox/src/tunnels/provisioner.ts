@@ -1,6 +1,7 @@
 import type {
   EnsureTunnelRunRequest,
   EnsureTunnelRunResult,
+  Logger,
   NamedTunnelInfo,
   QuickTunnelInfo,
   SandboxTunnelsAPI
@@ -28,6 +29,7 @@ export interface TunnelProvisionerHost {
     zoneId: string;
   }>;
   fetcher?: typeof fetch;
+  logger?: Logger;
 }
 
 export interface PreparedNamedTunnel {
@@ -47,6 +49,34 @@ function createQuickTunnelId(): string {
   return `quick-${randomId()}`;
 }
 
+/**
+ * The run holding `request.port` when the container rejected `request`
+ * with a port conflict. Containers older than this SDK omit
+ * `activeTunnelId`, which `stopTunnelRun` needs, so their conflicts yield
+ * `null`.
+ */
+function conflictingRunOnPort(
+  error: unknown,
+  request: EnsureTunnelRunRequest
+): { tunnelId: string; runId: string } | null {
+  const e = error as {
+    code?: unknown;
+    context?: Record<string, unknown>;
+  } | null;
+  if (e?.code !== 'TUNNEL_RUN_CONFLICT') return null;
+  const runId = e.context?.activeRunId;
+  const tunnelId = e.context?.activeTunnelId;
+  if (
+    e.context?.port !== request.port ||
+    typeof runId !== 'string' ||
+    typeof tunnelId !== 'string' ||
+    runId === request.runId
+  ) {
+    return null;
+  }
+  return { tunnelId, runId };
+}
+
 export class TunnelProvisioner {
   readonly #host: TunnelProvisionerHost;
   #zoneNamePromise: Promise<string> | null = null;
@@ -61,7 +91,7 @@ export class TunnelProvisioner {
     tunnelRunId: string,
     tunnelId = createQuickTunnelId()
   ): Promise<QuickTunnelInfo> {
-    const result = await this.#ensureTunnelRun(tunnels, {
+    const result = await this.#ensureQuickTunnelRun(tunnels, {
       mode: 'quick',
       tunnelId,
       runId: tunnelRunId,
@@ -212,6 +242,30 @@ export class TunnelProvisioner {
     request: EnsureTunnelRunRequest
   ): Promise<EnsureTunnelRunResult> {
     return await tunnels.ensureTunnelRun(request);
+  }
+
+  /**
+   * Start a quick tunnel run. The Durable Object owns every tunnel run in
+   * its container and holds the port lock, so a different run already on
+   * the port lost its storage record. Stop it and retry once instead of
+   * failing every later `get()` for the port.
+   */
+  async #ensureQuickTunnelRun(
+    tunnels: SandboxTunnelsAPI,
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult> {
+    try {
+      return await this.#ensureTunnelRun(tunnels, request);
+    } catch (error) {
+      const orphan = conflictingRunOnPort(error, request);
+      if (!orphan) throw error;
+      this.#host.logger?.warn('tunnel.get: stopping orphaned run on port', {
+        port: request.port,
+        ...orphan
+      });
+      await tunnels.stopTunnelRun(orphan);
+      return await this.#ensureTunnelRun(tunnels, request);
+    }
   }
 
   async #getZoneName(config: {
