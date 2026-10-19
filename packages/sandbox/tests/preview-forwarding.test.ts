@@ -179,9 +179,27 @@ describe('forwardPreviewRequest', () => {
     expect(lease.release).toHaveBeenCalledTimes(1);
   });
 
-  it('releases and rethrows generic errors', async () => {
+  it('returns other container port errors as failed', async () => {
     const lease = createLease();
-    const tcpFetch = vi.fn().mockRejectedValue(new Error('boom'));
+    const error = new Error('Container port connection closed unexpectedly.');
+    const tcpFetch = vi.fn().mockRejectedValue(error);
+
+    const result = await forwardPreviewRequest(
+      { fetch: tcpFetch },
+      new Request('http://localhost:8080/'),
+      lease.lease
+    );
+
+    expect(result).toEqual({ status: 'failed', error });
+    expect(lease.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an interruption when the runtime changes before the port fetch fails', async () => {
+    const lease = createLease();
+    const tcpFetch = vi.fn().mockImplementation(async () => {
+      lease.interrupt();
+      throw new Error('Container port connection closed unexpectedly.');
+    });
 
     await expect(
       forwardPreviewRequest(
@@ -189,7 +207,7 @@ describe('forwardPreviewRequest', () => {
         new Request('http://localhost:8080/'),
         lease.lease
       )
-    ).rejects.toThrow('boom');
+    ).rejects.toBeInstanceOf(OperationInterruptedError);
     expect(lease.release).toHaveBeenCalledTimes(1);
   });
 

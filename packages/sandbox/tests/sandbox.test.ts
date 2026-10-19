@@ -1779,6 +1779,31 @@ describe('Sandbox durable object behavior', () => {
       });
     });
 
+    it('answers 502 and logs the original error when the container port fails', async () => {
+      mockCtx.container.running = true;
+      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
+      const portError = Object.assign(
+        new Error('Container port connection closed unexpectedly.'),
+        { retryable: true }
+      );
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: vi.fn().mockRejectedValue(portError) });
+      const errorSpy = vi.spyOn((sandbox as any).logger, 'error');
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(502);
+      expect(await response.text()).toBe(
+        'Could not reach port 8080 in the container'
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Preview request to container port failed',
+        portError,
+        { port: 8080, method: 'GET' }
+      );
+    });
+
     it('rejects preview proxy requests without durable authorization', async () => {
       mockCtx.container.running = true;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
