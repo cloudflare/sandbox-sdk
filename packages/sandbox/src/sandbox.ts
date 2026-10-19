@@ -3764,18 +3764,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     headers.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
     headers.set('X-Sandbox-Name', this.sandboxName ?? sandboxId);
 
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader?.toLowerCase() === 'websocket') {
-      // WebSocket upgrade requests keep the original Request object so the
-      // Workers runtime preserves upgrade semantics. Preview forwarding routes
-      // by the explicit port argument, while the request URL still provides
-      // the path and query.
-      return new Request(request, {
-        headers,
-        redirect: 'manual'
-      });
-    }
-
+    // WebSocket upgrades take the same localhost URL as other requests, so the
+    // app sees one Host. The Upgrade header carries the upgrade semantics.
     return new Request(proxyUrl, {
       method: request.method,
       headers,
