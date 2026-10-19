@@ -310,6 +310,27 @@ describe('RPC transport: stop reported while connecting', () => {
     await firstCall;
   });
 
+  it('leaves alone an attempt that connects while the stop cleanup runs', async () => {
+    const sandbox = await makeRpcSandbox();
+    let connected = false;
+    vi.spyOn(sandbox.client, 'isWebSocketConnected').mockImplementation(
+      () => connected
+    );
+    vi.spyOn(
+      sandbox as unknown as { clearActivePreviewPorts: () => Promise<void> },
+      'clearActivePreviewPorts'
+    ).mockImplementation(async () => {
+      connected = true;
+    });
+    const disconnect = vi.spyOn(sandbox.client, 'disconnect');
+
+    await (
+      sandbox as unknown as { onStop: (p: object) => Promise<void> }
+    ).onStop({ exitCode: 0, reason: 'exit' });
+
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
   it('still disconnects an established connection', async () => {
     const sandbox = await makeRpcSandbox();
     vi.spyOn(sandbox.client, 'isWebSocketConnected').mockReturnValue(true);
