@@ -2,7 +2,8 @@
  * Session Tests - FIFO-based persistent shell execution
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -143,6 +144,37 @@ describe('Session', () => {
       expect(result.command).toBe('echo "Hello World"');
       expect(result.duration).toBeGreaterThan(0);
       expect(result.timestamp).toBeDefined();
+    });
+
+    it('survives an error from the exit-code directory watcher', async () => {
+      // Bun's Linux watcher emits ENOENT when another command's log file is
+      // deleted while it scans the session directory.
+      const realWatch = fs.watch;
+      const watchSpy = spyOn(fs, 'watch').mockImplementation(((
+        ...args: Parameters<typeof fs.watch>
+      ) => {
+        const watcher = realWatch(...args);
+        queueMicrotask(() =>
+          watcher.emit(
+            'error',
+            Object.assign(new Error('ENOENT: no such file or directory'), {
+              code: 'ENOENT',
+              syscall: 'watch'
+            })
+          )
+        );
+        return watcher;
+      }) as typeof fs.watch);
+
+      try {
+        const result = await session.exec('echo ok');
+
+        expect(watchSpy).toHaveBeenCalled();
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe('ok');
+      } finally {
+        watchSpy.mockRestore();
+      }
     });
 
     it('should capture stderr correctly', async () => {

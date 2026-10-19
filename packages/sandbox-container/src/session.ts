@@ -1395,6 +1395,13 @@ export class Session {
         }
       });
 
+      // Bun's directory watcher opens and watches each entry when the
+      // directory changes. Other commands create and delete log files here
+      // constantly, so it emits ENOENT for entries that vanish mid-scan. An
+      // unhandled 'error' event would crash the server; polling still
+      // detects the exit code.
+      watcher.on('error', () => {});
+
       // STEP 2: Set up polling fallback (fs.watch can miss rename events on some filesystems)
       const pollInterval = setInterval(async () => {
         if (resolved) return;
