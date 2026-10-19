@@ -18,23 +18,11 @@ export interface LocalSyncMountContext extends BucketMountOperationContext {
   retainRuntime: MountRuntimeLease['retain'];
 }
 
-export type LocalSyncMountValidation =
-  | { status: 'active' }
-  | { status: 'new'; r2Binding: R2Bucket };
-
-function normalizeLocalMountPrefix(
-  prefix: string | undefined
-): string | undefined {
-  const normalized = prefix?.replace(/^\/+|\/+$/g, '');
-  return normalized ? `${normalized}/` : undefined;
-}
-
-export function resolveLocalSyncMount(
+export function validateLocalSyncMount(
   context: Pick<LocalSyncMountContext, 'getEnv' | 'registry'>,
   bucket: string,
-  mountPath: string,
-  options: LocalMountBucketOptions
-): LocalSyncMountValidation {
+  mountPath: string
+): R2Bucket {
   const envObj = context.getEnv() as Record<string, unknown>;
   const r2Binding = envObj[bucket];
   if (!r2Binding || !isR2Bucket(r2Binding)) {
@@ -50,32 +38,12 @@ export function resolveLocalSyncMount(
     );
   }
 
-  const prefix = normalizeLocalMountPrefix(options.prefix);
-  const existingMount = context.registry.get(mountPath);
-  if (existingMount) {
-    if (
-      existingMount.mountType === 'local-sync' &&
-      existingMount.mounted &&
-      existingMount.syncManager.isRunning() &&
-      existingMount.bucket === bucket &&
-      existingMount.prefix === prefix &&
-      existingMount.readOnly === (options.readOnly ?? false)
-    ) {
-      return { status: 'active' };
-    }
-    if (
-      existingMount.mountType === 'local-sync' &&
-      !existingMount.syncManager.isRunning()
-    ) {
-      existingMount.syncManager.interrupt();
-      context.registry.delete(mountPath);
-      return { status: 'new', r2Binding };
-    }
+  if (context.registry.has(mountPath)) {
     throw new InvalidMountConfigError(
       `Mount path already in use: ${mountPath}`
     );
   }
-  return { status: 'new', r2Binding };
+  return r2Binding;
 }
 
 export async function mountLocalSyncBucket(
@@ -88,22 +56,8 @@ export async function mountLocalSyncBucket(
   let mountOutcome: 'success' | 'error' = 'error';
   let mountError: Error | undefined;
   try {
-    const validation = resolveLocalSyncMount(
-      context,
-      bucket,
-      mountPath,
-      options
-    );
-    if (validation.status === 'active') {
-      context.logger.debug('Local mount already active', {
-        mountPath,
-        bucket
-      });
-      mountOutcome = 'success';
-      return;
-    }
+    const r2Binding = validateLocalSyncMount(context, bucket, mountPath);
 
-    const r2Binding = validation.r2Binding;
     let syncManager: LocalMountSyncManager | null = null;
     const runtimeHold = context.retainRuntime(() => {
       syncManager?.interrupt();
@@ -124,12 +78,10 @@ export async function mountLocalSyncBucket(
       bucket,
       mountPath,
       syncManager,
-      mounted: false,
-      prefix: normalizeLocalMountPrefix(options.prefix),
-      readOnly: options.readOnly ?? false
+      mounted: false
     };
+    const lifecycle = await context.lifecycle.capture(context.runtime);
     try {
-      const lifecycle = await context.lifecycle.capture(context.runtime);
       await syncManager.start();
       await context.lifecycle.assertCurrent(lifecycle);
       mountInfo.mounted = true;

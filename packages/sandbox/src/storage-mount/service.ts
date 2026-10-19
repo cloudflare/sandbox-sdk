@@ -18,7 +18,7 @@ import {
 import { MountOperationQueue } from './operation-queue';
 import {
   mountLocalSyncBucket,
-  resolveLocalSyncMount
+  validateLocalSyncMount
 } from './operations/local-sync-mount';
 import {
   mountR2EgressBucket,
@@ -126,23 +126,14 @@ export class BucketMountService {
     mountPath: string,
     options: LocalMountBucketOptions
   ): Promise<void> {
-    const validation = resolveLocalSyncMount(
+    validateLocalSyncMount(
       {
         registry: this.registry,
         getEnv: () => this.deps.getEnv()
       },
       bucket,
-      mountPath,
-      options
+      mountPath
     );
-    if (validation.status === 'active') {
-      this.deps.logger.debug('Local mount already active', {
-        mountPath,
-        bucket
-      });
-      return;
-    }
-
     await this.deps.runMountAttempt('mount.local', async (lease) => {
       const runRuntimeCall = callWithMountControl(lease.control);
       await mountLocalSyncBucket(

@@ -3,10 +3,6 @@
  * Used by both client SDK and container runtime
  */
 
-export {
-  createAtomicWriteTempPath,
-  getAtomicWriteTargetPath
-} from './atomic-write-path.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 export type {

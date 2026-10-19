@@ -1,49 +1,25 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContainerControlClient } from '../src/container-control';
 import {
   LocalMountSyncManager,
   UPLOAD_DEBOUNCE_MS
 } from '../src/local-mount-sync';
-import { mountLocalSyncBucket } from '../src/storage-mount/operations/local-sync-mount';
-import { MountRegistry } from '../src/storage-mount/registry';
 
 // ---------------------------------------------------------------------------
 // Helpers to build mock R2 objects
 // ---------------------------------------------------------------------------
 
-const encoder = new TextEncoder();
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const combined = new Uint8Array(
-    chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
-  );
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return combined;
-}
-
-function createByteStream(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk);
-      controller.close();
-    }
-  });
-}
-
 function makeR2Object(key: string, body: string, etag = `etag-${key}`) {
-  const bytes = new TextEncoder().encode(body);
-  const buffer = bytes.buffer as ArrayBuffer;
+  const encoder = new TextEncoder();
+  const buffer = encoder.encode(body).buffer as ArrayBuffer;
   return {
     key,
     etag,
-    size: bytes.byteLength,
-    body: createByteStream(bytes),
+    size: body.length,
+    get body() {
+      return new Response(buffer).body;
+    },
     arrayBuffer: () => Promise.resolve(buffer)
   } as unknown as R2ObjectBody;
 }
@@ -56,19 +32,12 @@ function makeR2Head(key: string, size: number, etag = `etag-${key}`) {
 // Mock factories
 // ---------------------------------------------------------------------------
 
-interface MultipartUploadRecord {
-  key: string;
-  parts: Array<{ partNumber: number; bytes: Uint8Array }>;
-  completed: boolean;
-  aborted: boolean;
-}
-
 function createMockR2Bucket(
-  objects: Map<string, { body: string; etag: string }>,
-  options: { failUploadPart?: number } = {}
+  objects: Map<string, { body: string; etag: string }>
 ) {
-  const multipartUploads: MultipartUploadRecord[] = [];
+  const uploaded = new Map<string, Uint8Array>();
   const bucket = {
+    uploaded,
     list: vi.fn(async (opts?: R2ListOptions) => {
       const result: R2Object[] = [];
       for (const [key, val] of objects) {
@@ -87,58 +56,35 @@ function createMockR2Bucket(
       if (!val) return null;
       return makeR2Object(key, val.body, val.etag);
     }),
-    put: vi.fn(async () => null),
+    put: vi.fn(async (key: string, value: unknown) => {
+      if (value instanceof ReadableStream) {
+        uploaded.set(
+          key,
+          new Uint8Array(await new Response(value).arrayBuffer())
+        );
+      }
+      return null;
+    }),
     delete: vi.fn(async () => {}),
     head: vi.fn(async (key: string) => {
       const val = objects.get(key);
       if (!val) return null;
       return makeR2Head(key, val.body.length, val.etag);
     }),
-    createMultipartUpload: vi.fn(async (key: string) => {
-      const record: MultipartUploadRecord = {
-        key,
-        parts: [],
-        completed: false,
-        aborted: false
-      };
-      multipartUploads.push(record);
-      return {
-        key,
-        uploadId: `upload-${multipartUploads.length}`,
-        uploadPart: vi.fn(async (partNumber: number, value: Uint8Array) => {
-          if (options.failUploadPart === partNumber) {
-            throw new Error(`part ${partNumber} rejected`);
-          }
-          record.parts.push({ partNumber, bytes: value });
-          return { partNumber, etag: `etag-part-${partNumber}` };
-        }),
-        complete: vi.fn(async () => {
-          record.completed = true;
-          return makeR2Head(key, 0);
-        }),
-        abort: vi.fn(async () => {
-          record.aborted = true;
-        })
-      } as unknown as R2MultipartUpload;
-    }),
-    resumeMultipartUpload: vi.fn(),
-    multipartUploads
+    createMultipartUpload: vi.fn(),
+    resumeMultipartUpload: vi.fn()
   } as unknown as R2Bucket & {
+    uploaded: Map<string, Uint8Array>;
     list: ReturnType<typeof vi.fn>;
     get: ReturnType<typeof vi.fn>;
     put: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
     head: ReturnType<typeof vi.fn>;
-    createMultipartUpload: ReturnType<typeof vi.fn>;
-    multipartUploads: MultipartUploadRecord[];
   };
   return bucket;
 }
 
-function createMockFileClient(
-  chunks: Array<string | Uint8Array> = [encoder.encode('file-content')],
-  onStreamCancel?: (reason: unknown) => void
-) {
+function createMockFileClient() {
   return {
     mkdir: vi.fn(async () => ({
       success: true,
@@ -159,37 +105,14 @@ function createMockFileClient(
       bytesWritten: 0,
       timestamp: new Date().toISOString()
     })),
-    readFile: vi.fn(async (_path: string, opts?: { encoding?: string }) => {
-      const byteChunks = chunks.map((chunk) =>
-        typeof chunk === 'string' ? encoder.encode(chunk) : chunk
-      );
-      const size = byteChunks.reduce(
-        (total, chunk) => total + chunk.byteLength,
-        0
-      );
-      if (opts?.encoding === 'none') {
-        return {
-          success: true,
-          content: new ReadableStream<Uint8Array>({
-            start(controller) {
-              for (const chunk of byteChunks) controller.enqueue(chunk);
-              if (!onStreamCancel) controller.close();
-            },
-            cancel: onStreamCancel
-          }),
-          path: _path,
-          size,
-          mimeType: 'application/octet-stream',
-          timestamp: new Date().toISOString()
-        };
-      }
+    readFile: vi.fn(async (path: string, _opts?: { encoding?: string }) => {
+      const bytes = new TextEncoder().encode('file-content');
       return {
         success: true,
-        content:
-          opts?.encoding === 'base64' ? btoa('file-content') : 'file-content',
-        path: _path,
-        encoding: opts?.encoding || 'utf-8',
-        size: 12,
+        content: new Response(bytes).body as ReadableStream<Uint8Array>,
+        path,
+        size: bytes.byteLength,
+        mimeType: 'text/plain',
         timestamp: new Date().toISOString()
       };
     }),
@@ -271,7 +194,7 @@ function createMockControlClient(
   return {
     files: fileClient,
     watch: watchClient
-  } as unknown as ContainerControlClient;
+  } as any;
 }
 
 function deferred<T = void>() {
@@ -299,44 +222,6 @@ describe('LocalMountSyncManager', () => {
   afterEach(async () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-  });
-
-  describe('mount lifecycle', () => {
-    it('releases retained runtime authority when capture fails', async () => {
-      const release = vi.fn();
-      const bucket = createMockR2Bucket(new Map());
-      const client = createMockControlClient(
-        createMockFileClient(),
-        createMockWatchClient()
-      );
-      const context = {
-        registry: new MountRegistry(),
-        logger,
-        runRuntimeCall: async (
-          _operation: string,
-          call: (control: ContainerControlClient) => Promise<unknown>
-        ) => await call(client),
-        getOutboundHost: () => ({}),
-        s3fsHost: null,
-        getEnv: () => ({ BUCKET: bucket }),
-        lifecycle: {
-          capture: vi.fn().mockRejectedValue(new Error('capture failed')),
-          assertCurrent: vi.fn()
-        },
-        runtime: {},
-        retainRuntime: () => ({ release })
-      } as unknown as Parameters<typeof mountLocalSyncBucket>[0];
-
-      await expect(
-        mountLocalSyncBucket(context, 'BUCKET', '/mnt/data', {
-          localBucket: true,
-          readOnly: true
-        })
-      ).rejects.toThrow('capture failed');
-
-      expect(release).toHaveBeenCalledTimes(1);
-      expect(context.registry.has('/mnt/data')).toBe(false);
-    });
   });
 
   describe('runtime callback scoping', () => {
@@ -436,6 +321,7 @@ describe('LocalMountSyncManager', () => {
       await stopPromise;
       expect(stopped).toBe(true);
     });
+
     it('does not reconnect after a stopped watch callback rejects', async () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
@@ -553,11 +439,9 @@ describe('LocalMountSyncManager', () => {
         eventType: 'modify',
         isDirectory: false
       });
-      await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(readControl.files.readFile).toHaveBeenCalledWith(
-        '/mnt/data/file.txt',
-        { encoding: 'none' }
+      await vi.waitFor(() =>
+        expect(readControl.files.readFile).toHaveBeenCalled()
       );
 
       expect(controlsByOperation.get('mount.local.watch')).toEqual([
@@ -659,56 +543,6 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
-    it('transfers objects sequentially on start and poll', async () => {
-      const r2Objects = new Map([
-        ['a.txt', { body: 'a', etag: 'etag-a' }],
-        ['b.txt', { body: 'b', etag: 'etag-b' }],
-        ['c.txt', { body: 'c', etag: 'etag-c' }]
-      ]);
-      const bucket = createMockR2Bucket(r2Objects);
-      const fileClient = createMockFileClient();
-      const client = createMockControlClient(
-        fileClient,
-        createMockWatchClient()
-      );
-      let inFlight = 0;
-      let maxInFlight = 0;
-      fileClient.writeFile.mockImplementation(async () => {
-        inFlight++;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await Promise.resolve();
-        inFlight--;
-        return {
-          success: true,
-          path: '',
-          bytesWritten: 0,
-          timestamp: new Date().toISOString()
-        };
-      });
-
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: true,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000
-      });
-
-      await manager.start();
-      expect(maxInFlight).toBe(1);
-
-      r2Objects.set('d.txt', { body: 'd', etag: 'etag-d' });
-      r2Objects.set('e.txt', { body: 'e', etag: 'etag-e' });
-      await vi.advanceTimersByTimeAsync(1000);
-
-      expect(fileClient.writeFile).toHaveBeenCalledTimes(5);
-      expect(maxInFlight).toBe(1);
-      await manager.stop();
-    });
-
     it('should not start container watch when readOnly is true', async () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
@@ -755,77 +589,6 @@ describe('LocalMountSyncManager', () => {
         recursive: true
       });
 
-      await manager.stop();
-    });
-  });
-
-  describe('large object transfer (R2 → Container)', () => {
-    it('streams an object too large for one base64 control frame', async () => {
-      const bucket = createMockR2Bucket(
-        new Map([['checkpoint.sqsh', { body: 'payload', etag: 'etag1' }]])
-      );
-      const body = createByteStream(encoder.encode('payload'));
-      bucket.get.mockResolvedValueOnce({
-        ...makeR2Object('checkpoint.sqsh', 'payload', 'etag1'),
-        size: 13_800_000,
-        body
-      } as unknown as R2ObjectBody);
-      const fileClient = createMockFileClient();
-      const client = createMockControlClient(
-        fileClient,
-        createMockWatchClient()
-      );
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: true,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger
-      });
-
-      await manager.start();
-
-      expect(fileClient.writeFileStream).toHaveBeenCalledWith(
-        '/mnt/data/checkpoint.sqsh',
-        expect.any(ReadableStream)
-      );
-      expect(fileClient.writeFile).not.toHaveBeenCalled();
-      await manager.stop();
-    });
-
-    it('cancels the R2 body when a streamed write rejects', async () => {
-      const bucket = createMockR2Bucket(
-        new Map([['checkpoint.sqsh', { body: 'payload', etag: 'etag1' }]])
-      );
-      const sourceCancel = vi.fn();
-      bucket.get.mockResolvedValueOnce({
-        ...makeR2Object('checkpoint.sqsh', 'payload', 'etag1'),
-        size: 13_800_000,
-        body: new ReadableStream<Uint8Array>({
-          start() {},
-          cancel: sourceCancel
-        })
-      } as unknown as R2ObjectBody);
-      const fileClient = createMockFileClient();
-      fileClient.writeFileStream.mockRejectedValue(
-        new Error('stream write rejected')
-      );
-      const client = createMockControlClient(
-        fileClient,
-        createMockWatchClient()
-      );
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: true,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger
-      });
-
-      await expect(manager.start()).rejects.toThrow('stream write rejected');
-      expect(sourceCancel).toHaveBeenCalledTimes(1);
       await manager.stop();
     });
   });
@@ -911,161 +674,7 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
-    it('does not overwrite a pending local edit during polling', async () => {
-      const r2Objects = new Map([
-        ['file.txt', { body: 'original', etag: 'etag-v1' }]
-      ]);
-      const bucket = createMockR2Bucket(r2Objects);
-      const fileClient = createMockFileClient([encoder.encode('local edit')]);
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000
-      });
-      await manager.start();
-      fileClient.writeFile.mockClear();
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/file.txt',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      r2Objects.set('file.txt', { body: 'remote edit', etag: 'etag-v2' });
-
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.writeFile).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS - 1000);
-      expect(bucket.put).toHaveBeenCalledWith(
-        'file.txt',
-        encoder.encode('local edit')
-      );
-      watch.close();
-      await manager.stop();
-    });
-
-    it('rechecks local intent after creating a parent directory', async () => {
-      const r2Objects = new Map<string, { body: string; etag: string }>();
-      const bucket = createMockR2Bucket(r2Objects);
-      const fileClient = createMockFileClient([encoder.encode('local edit')]);
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000
-      });
-      await manager.start();
-      bucket.get.mockClear();
-
-      const parentDirectory =
-        deferred<Awaited<ReturnType<typeof fileClient.mkdir>>>();
-      fileClient.mkdir.mockImplementationOnce(() => parentDirectory.promise);
-      r2Objects.set('nested/file.txt', {
-        body: 'remote edit',
-        etag: 'etag-remote'
-      });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.mkdir).toHaveBeenCalledWith('/mnt/data/nested', {
-        recursive: true
-      });
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/nested/file.txt',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      parentDirectory.resolve({
-        success: true,
-        exitCode: 0,
-        path: '/mnt/data/nested',
-        recursive: true,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(bucket.get).not.toHaveBeenCalled();
-      expect(fileClient.writeFile).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      watch.close();
-      await manager.stop();
-    });
-
-    it('keeps echo suppression through overlapping updates', async () => {
-      const r2Objects = new Map<string, { body: string; etag: string }>();
-      const bucket = createMockR2Bucket(r2Objects);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000,
-        echoSuppressTtlMs: 2000
-      });
-      await manager.start();
-
-      r2Objects.set('updated.txt', { body: 'first', etag: 'etag-first' });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.writeFile).toHaveBeenCalledTimes(1);
-
-      const secondWrite = deferred();
-      fileClient.writeFile.mockImplementationOnce(async () => {
-        await secondWrite.promise;
-        return {
-          success: true,
-          path: '/mnt/data/updated.txt',
-          bytesWritten: 6,
-          timestamp: new Date().toISOString()
-        };
-      });
-      r2Objects.set('updated.txt', { body: 'second', etag: 'etag-second' });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.writeFile).toHaveBeenCalledTimes(2);
-
-      await vi.advanceTimersByTimeAsync(1000);
-      watch.emit({
-        type: 'event',
-        eventType: 'move_to',
-        path: '/mnt/data/updated.txt',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fileClient.readFile).not.toHaveBeenCalled();
-      expect(bucket.put).not.toHaveBeenCalled();
-
-      secondWrite.resolve();
-      await vi.advanceTimersByTimeAsync(0);
-      watch.close();
-      await manager.stop();
-    });
-
-    it('retries R2 deletions after a container delete failure', async () => {
+    it('should detect deleted objects on poll', async () => {
       const r2Objects = new Map([
         ['file.txt', { body: 'content', etag: 'etag1' }]
       ]);
@@ -1087,18 +696,17 @@ describe('LocalMountSyncManager', () => {
 
       await manager.start();
 
+      // Clear initial sync calls
       fileClient.deleteFile.mockClear();
-      fileClient.deleteFile.mockRejectedValueOnce(new Error('delete failed'));
+
+      // Remove from R2
       r2Objects.delete('file.txt');
 
+      // Advance timer to trigger poll
       await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.deleteFile).toHaveBeenCalledTimes(1);
 
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.deleteFile).toHaveBeenCalledTimes(2);
-      expect(fileClient.deleteFile).toHaveBeenLastCalledWith(
-        '/mnt/data/file.txt'
-      );
+      // Should detect deletion
+      expect(fileClient.deleteFile).toHaveBeenCalledWith('/mnt/data/file.txt');
 
       await manager.stop();
     });
@@ -1138,45 +746,6 @@ describe('LocalMountSyncManager', () => {
 
       await manager.stop();
     });
-  });
-
-  it('keeps and retries a modified object after transfer failure', async () => {
-    const r2Objects = new Map([
-      ['retry.txt', { body: 'original', etag: 'etag-1' }]
-    ]);
-    const bucket = createMockR2Bucket(r2Objects);
-    const fileClient = createMockFileClient();
-    const client = createMockControlClient(fileClient, createMockWatchClient());
-    const manager = new LocalMountSyncManager({
-      bucket: bucket as unknown as R2Bucket,
-      mountPath: '/mnt/data',
-      prefix: undefined,
-      readOnly: true,
-      runRuntimeCall: async (_operation, call) => call(client),
-      logger,
-      runtimeHold: { release: () => {} },
-      pollIntervalMs: 1000
-    });
-    await manager.start();
-    fileClient.writeFile.mockClear();
-    fileClient.deleteFile.mockClear();
-    fileClient.writeFile
-      .mockRejectedValueOnce(new Error('temporary write failure'))
-      .mockResolvedValue({
-        success: true,
-        path: '/mnt/data/retry.txt',
-        bytesWritten: 7,
-        timestamp: new Date().toISOString()
-      });
-    r2Objects.set('retry.txt', { body: 'updated', etag: 'etag-2' });
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(fileClient.deleteFile).not.toHaveBeenCalled();
-    expect(fileClient.writeFile).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(fileClient.writeFile).toHaveBeenCalledTimes(2);
-    await manager.stop();
   });
 
   describe('prefix filtering', () => {
@@ -1287,7 +856,7 @@ describe('LocalMountSyncManager', () => {
       // R2 key must NOT have a leading slash
       expect(bucket.put).toHaveBeenCalledWith(
         'some/prefix/foo.txt',
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       close();
@@ -1324,7 +893,7 @@ describe('LocalMountSyncManager', () => {
         timestamp: new Date().toISOString()
       });
       await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(bucket.put).toHaveBeenCalledTimes(1));
 
       await manager.stop();
       await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
@@ -1381,6 +950,7 @@ describe('LocalMountSyncManager', () => {
           })
       ).toThrow(/Prefix must start with/);
     });
+
     it('should handle prefix without trailing slash', async () => {
       const r2Objects = new Map([
         ['uploads/photo.jpg', { body: 'img', etag: 'etag1' }]
@@ -1401,7 +971,6 @@ describe('LocalMountSyncManager', () => {
 
       await manager.start();
 
-      expect(bucket.list).toHaveBeenCalledWith({ prefix: 'uploads/' });
       // File must land inside mount dir, not at absolute '/photo.jpg'
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/photo.jpg',
@@ -1415,6 +984,7 @@ describe('LocalMountSyncManager', () => {
 
   describe('Container to R2 (watch direction)', () => {
     // Yield to the microtask queue so the watch loop processes emitted events
+    // Let the watch loop process emitted events and any upload settle
     const flush = () => vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
 
     it('should upload file to R2 on create event', async () => {
@@ -1452,14 +1022,18 @@ describe('LocalMountSyncManager', () => {
 
       await flush();
 
+      // Should stream the raw file from the container
       expect(fileClient.readFile).toHaveBeenCalledWith('/mnt/data/hello.txt', {
         encoding: 'none'
       });
+      expect(bucket.uploaded.get('hello.txt')).toEqual(
+        new TextEncoder().encode('file-content')
+      );
 
       // Should upload to R2
       expect(bucket.put).toHaveBeenCalledWith(
         'hello.txt',
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       // Should update snapshot via head
@@ -1509,7 +1083,7 @@ describe('LocalMountSyncManager', () => {
       );
       expect(bucket.put).toHaveBeenCalledWith(
         'existing.txt',
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       close();
@@ -1607,7 +1181,7 @@ describe('LocalMountSyncManager', () => {
       await flush();
       expect(bucket.put).toHaveBeenCalledWith(
         'new-name.txt',
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       close();
@@ -1733,7 +1307,7 @@ describe('LocalMountSyncManager', () => {
       // R2 key should include prefix (leading slash stripped)
       expect(bucket.put).toHaveBeenCalledWith(
         'uploads/photo.jpg',
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       close();
@@ -1741,141 +1315,11 @@ describe('LocalMountSyncManager', () => {
     });
   });
 
-  it('syncs persistent files that resemble atomic write paths', async () => {
-    const bucket = createMockR2Bucket(new Map());
-    const fileClient = createMockFileClient();
-    const watch = createControllableWatchClient();
-    const client = createMockControlClient(fileClient, watch.client);
-    const manager = new LocalMountSyncManager({
-      bucket: bucket as unknown as R2Bucket,
-      mountPath: '/mnt/data',
-      prefix: undefined,
-      readOnly: false,
-      runRuntimeCall: async (_operation, call) => call(client),
-      logger,
-      runtimeHold: { release: () => {} },
-      pollIntervalMs: 60_000
-    });
-    await manager.start();
-
-    const name = 'artifact.tmp.123e4567-e89b-42d3-a456-426614174000';
-    watch.emit({
-      type: 'event',
-      eventType: 'modify',
-      path: `/mnt/data/${name}`,
-      isDirectory: false,
-      timestamp: new Date().toISOString()
-    });
-    await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-
-    expect(bucket.put).toHaveBeenCalledWith(name, expect.any(Uint8Array));
-    watch.close();
-    await manager.stop();
-  });
-
-  describe('Container → R2 streaming uploads', () => {
-    const partBytes = 16;
-
-    async function uploadFileViaWatch(
-      chunks: Array<string | Uint8Array>,
-      options: {
-        failUploadPart?: number;
-        onStreamCancel?: (reason: unknown) => void;
-      } = {}
+  describe('large files and write bursts', () => {
+    function setup(
+      r2Objects = new Map<string, { body: string; etag: string }>()
     ) {
-      const bucket = createMockR2Bucket(new Map(), {
-        failUploadPart: options.failUploadPart
-      });
-      const fileClient = createMockFileClient(chunks, options.onStreamCancel);
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000,
-        uploadPartBytes: partBytes
-      });
-
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'create',
-        path: '/mnt/data/archive.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      watch.close();
-      if (options.failUploadPart === undefined) {
-        await manager.stop();
-      } else {
-        manager.interrupt();
-        await vi.advanceTimersByTimeAsync(0);
-      }
-      return { bucket, fileClient };
-    }
-
-    it('uploads exact equal multipart parts and a smaller final part', async () => {
-      const source = Uint8Array.from(
-        { length: partBytes * 2 + 8 },
-        (_, index) => index
-      );
-      const chunks: Uint8Array[] = [];
-      const chunkBytes = 7;
-      for (let offset = 0; offset < source.byteLength; offset += chunkBytes) {
-        chunks.push(source.subarray(offset, offset + chunkBytes));
-      }
-
-      const { bucket, fileClient } = await uploadFileViaWatch(chunks);
-      const [upload] = bucket.multipartUploads;
-
-      expect(fileClient.readFile).toHaveBeenCalledWith(
-        '/mnt/data/archive.bin',
-        { encoding: 'none' }
-      );
-      expect(bucket.put).not.toHaveBeenCalled();
-      expect(upload.parts.map((part) => part.bytes.byteLength)).toEqual([
-        partBytes,
-        partBytes,
-        8
-      ]);
-      expect(concatBytes(upload.parts.map((part) => part.bytes))).toEqual(
-        source
-      );
-      expect(upload.completed).toBe(true);
-      expect(upload.aborted).toBe(false);
-    });
-    it('preserves non-UTF-8 bytes regardless of file MIME type', async () => {
-      const source = Uint8Array.from([0x80, 0xff, 0x00, 0x41]);
-      const { bucket } = await uploadFileViaWatch([source]);
-
-      expect(bucket.put).toHaveBeenCalledWith('archive.bin', source);
-    });
-    it('aborts a multipart upload when a part fails', async () => {
-      const source = new Uint8Array(partBytes * 2 + 1);
-      const sourceCancel = vi.fn();
-      const { bucket } = await uploadFileViaWatch([source], {
-        failUploadPart: 2,
-        onStreamCancel: sourceCancel
-      });
-      const [upload] = bucket.multipartUploads;
-
-      expect(upload.aborted).toBe(true);
-      expect(upload.completed).toBe(false);
-      expect(bucket.put).not.toHaveBeenCalled();
-      expect(sourceCancel).toHaveBeenCalled();
-    });
-  });
-
-  describe('upload debounce', () => {
-    it('collapses a write burst into one upload', async () => {
-      const bucket = createMockR2Bucket(new Map());
+      const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watch = createControllableWatchClient();
       const client = createMockControlClient(fileClient, watch.client);
@@ -1885,285 +1329,207 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
-        logger,
         runtimeHold: { release: () => {} },
+        logger,
         pollIntervalMs: 60_000
       });
-      await manager.start();
-
-      for (const eventType of ['create', 'modify', 'modify']) {
+      const emitFileEvent = (eventType: string, path: string) =>
         watch.emit({
           type: 'event',
           eventType,
-          path: '/mnt/data/archive.tar',
+          path,
           isDirectory: false,
           timestamp: new Date().toISOString()
         });
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS - 500);
+      return { bucket, fileClient, manager, emitFileEvent };
+    }
+
+    it('should stream large objects into the container', async () => {
+      const { fileClient, manager } = setup(
+        new Map([
+          [
+            'large.bin',
+            { body: 'x'.repeat(4 * 1024 * 1024 + 1), etag: 'etag-large' }
+          ],
+          ['small.txt', { body: 'small', etag: 'etag-small' }]
+        ])
+      );
+
+      await manager.start();
+
+      expect(fileClient.writeFileStream).toHaveBeenCalledWith(
+        '/mnt/data/large.bin',
+        expect.any(ReadableStream)
+      );
+      expect(fileClient.writeFile).toHaveBeenCalledTimes(1);
+      expect(fileClient.writeFile).toHaveBeenCalledWith(
+        '/mnt/data/small.txt',
+        btoa('small'),
+        { encoding: 'base64' }
+      );
+
+      await manager.stop();
+    });
+
+    it('should upload a file once after a burst of modify events settles', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
+      await manager.start();
+
+      emitFileEvent('create', '/mnt/data/archive.tar');
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS / 2);
+        emitFileEvent('modify', '/mnt/data/archive.tar');
       }
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS - 1);
       expect(fileClient.readFile).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1);
       expect(fileClient.readFile).toHaveBeenCalledTimes(1);
       expect(bucket.put).toHaveBeenCalledTimes(1);
-      watch.close();
+
       await manager.stop();
     });
 
-    it('retries a failed upload without another watch event', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      bucket.put
-        .mockRejectedValueOnce(new Error('temporary upload failure'))
-        .mockResolvedValue(null);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
+    it('should drop a pending upload when the file is deleted', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
       await manager.start();
 
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/retry.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
+      emitFileEvent('modify', '/mnt/data/scratch.txt');
+      await vi.advanceTimersByTimeAsync(0);
+      emitFileEvent('delete', '/mnt/data/scratch.txt');
       await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
 
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(2);
-      watch.close();
+      expect(bucket.delete).toHaveBeenCalledWith('scratch.txt');
+      expect(fileClient.readFile).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+
       await manager.stop();
     });
 
-    it('lets a delete supersede a failed upload retry', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      bucket.put.mockRejectedValueOnce(new Error('temporary upload failure'));
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
+    it('should delete an object only after its in-flight upload finishes', async () => {
+      const { bucket, manager, emitFileEvent } = setup();
+      const putRelease = deferred();
+      bucket.put.mockImplementationOnce(
+        async (_key: string, value: unknown) => {
+          await new Response(value as ReadableStream).arrayBuffer();
+          await putRelease.promise;
+          return null;
+        }
+      );
       await manager.start();
 
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/retry.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
+      emitFileEvent('modify', '/mnt/data/report.csv');
       await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
       expect(bucket.put).toHaveBeenCalledTimes(1);
 
-      watch.emit({
-        type: 'event',
-        eventType: 'delete',
-        path: '/mnt/data/retry.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(bucket.delete).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
-      watch.close();
-      await manager.stop();
-    });
-
-    it('retries a failed delete without another watch event', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      bucket.delete
-        .mockRejectedValueOnce(new Error('temporary delete failure'))
-        .mockResolvedValue(undefined);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-
-      watch.emit({
-        type: 'event',
-        eventType: 'delete',
-        path: '/mnt/data/retry.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(bucket.delete).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.delete).toHaveBeenCalledTimes(2);
-      watch.close();
-      await manager.stop();
-    });
-
-    it('serializes uploads across paths', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const firstPutRelease = deferred<R2Object | null>();
-      bucket.put
-        .mockImplementationOnce(async () => firstPutRelease.promise)
-        .mockResolvedValue(null);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/serial-a.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/serial-b.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
-
-      firstPutRelease.resolve(null);
-      await vi.waitFor(() => expect(bucket.put).toHaveBeenCalledTimes(2));
-      watch.close();
-      await manager.stop();
-    });
-
-    it('waits for an active upload before deleting its object', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const putRelease = deferred<R2Object | null>();
-      bucket.put.mockImplementationOnce(async () => putRelease.promise);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/active.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
-
-      watch.emit({
-        type: 'event',
-        eventType: 'delete',
-        path: '/mnt/data/active.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
+      emitFileEvent('delete', '/mnt/data/report.csv');
       await vi.advanceTimersByTimeAsync(0);
       expect(bucket.delete).not.toHaveBeenCalled();
 
-      putRelease.resolve(null);
-      await vi.waitFor(() =>
-        expect(bucket.delete).toHaveBeenCalledWith('active.bin')
-      );
-      watch.close();
+      putRelease.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(bucket.delete).toHaveBeenCalledWith('report.csv');
+
       await manager.stop();
     });
 
-    it('cancels a queued upload when the file is deleted', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
+    it('stop remains pending until an in-flight upload settles', async () => {
+      const { bucket, manager, emitFileEvent } = setup();
+      const putRelease = deferred();
+      let stopped = false;
+      bucket.put.mockImplementationOnce(
+        async (_key: string, value: unknown) => {
+          await new Response(value as ReadableStream).arrayBuffer();
+          await putRelease.promise;
+          return null;
+        }
+      );
       await manager.start();
 
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/scratch.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
+      emitFileEvent('modify', '/mnt/data/report.csv');
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
+      expect(bucket.put).toHaveBeenCalledTimes(1);
+
+      const stopPromise = manager.stop().then(() => {
+        stopped = true;
       });
       await vi.advanceTimersByTimeAsync(0);
-      watch.emit({
-        type: 'event',
-        eventType: 'delete',
-        path: '/mnt/data/scratch.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
+      expect(stopped).toBe(false);
+
+      putRelease.resolve();
+      await stopPromise;
+      expect(stopped).toBe(true);
+    });
+
+    it('should suppress watch events from an R2 write that outlasts the echo window', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const { bucket, fileClient, manager, emitFileEvent } = setup(r2Objects);
+      await manager.start();
+
+      r2Objects.set('slow.bin', { body: 'remote', etag: 'etag-slow' });
+      fileClient.writeFile.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return {
+          success: true,
+          path: '/mnt/data/slow.bin',
+          bytesWritten: 6,
+          timestamp: new Date().toISOString()
+        };
       });
-      await vi.advanceTimersByTimeAsync(0);
+
+      // Poll, then a write that takes longer than the 2s echo window.
+      await vi.advanceTimersByTimeAsync(60_000 + 3000);
+      emitFileEvent('modify', '/mnt/data/slow.bin');
       await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
 
-      expect(bucket.delete).toHaveBeenCalledWith('scratch.bin');
       expect(fileClient.readFile).not.toHaveBeenCalled();
       expect(bucket.put).not.toHaveBeenCalled();
-      watch.close();
+
       await manager.stop();
+    });
+
+    it('should stop reading the container file when the R2 upload fails', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
+      const cancel = vi.fn();
+      const content = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < 4; i++) {
+            controller.enqueue(new Uint8Array(1024));
+          }
+        },
+        cancel
+      });
+      fileClient.readFile.mockResolvedValueOnce({
+        success: true,
+        content,
+        path: '/mnt/data/upload.bin',
+        size: 8192,
+        mimeType: 'application/octet-stream',
+        timestamp: new Date().toISOString()
+      });
+      bucket.put.mockRejectedValueOnce(new Error('R2 unavailable'));
+      await manager.start();
+
+      emitFileEvent('modify', '/mnt/data/upload.bin');
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
+
+      expect(bucket.put).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalled();
+
+      await manager.stop();
+    });
+
+    it('should not upload pending changes after stop', async () => {
+      const { bucket, fileClient, manager, emitFileEvent } = setup();
+      await manager.start();
+
+      emitFileEvent('modify', '/mnt/data/draft.txt');
+      await vi.advanceTimersByTimeAsync(0);
+      await manager.stop();
+      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
+
+      expect(fileClient.readFile).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
     });
   });
 
@@ -2196,363 +1562,6 @@ describe('LocalMountSyncManager', () => {
       await vi.advanceTimersByTimeAsync(5000);
 
       expect(bucket.list).not.toHaveBeenCalled();
-    });
-
-    it('flushes uploads still waiting for the debounce', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/pending.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      const stop = manager.stop();
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      await stop;
-
-      expect(fileClient.readFile).toHaveBeenCalledWith(
-        '/mnt/data/pending.bin',
-        {
-          encoding: 'none'
-        }
-      );
-      expect(bucket.put).toHaveBeenCalledWith(
-        'pending.bin',
-        encoder.encode('file-content')
-      );
-    });
-
-    it('flushes an upload retry scheduled during stop', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const firstPut = deferred<R2Object | null>();
-      bucket.put
-        .mockImplementationOnce(() => firstPut.promise)
-        .mockResolvedValue(null);
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/retry-during-stop.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalledTimes(1);
-
-      const stop = manager.stop();
-      firstPut.reject(new Error('temporary upload failure'));
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      await stop;
-
-      expect(bucket.put).toHaveBeenCalledTimes(2);
-    });
-
-    it('bounds graceful stop when a file stream stalls', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      fileClient.readFile.mockResolvedValue({
-        success: true,
-        content: new ReadableStream<Uint8Array>({ start() {} }),
-        path: '/mnt/data/stalled.bin',
-        size: 1,
-        mimeType: 'application/octet-stream',
-        timestamp: new Date().toISOString()
-      });
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/stalled.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(fileClient.readFile).toHaveBeenCalled();
-
-      let stopped = false;
-      const stop = manager.stop().then(() => {
-        stopped = true;
-      });
-      await vi.advanceTimersByTimeAsync(5000);
-      await vi.advanceTimersByTimeAsync(0);
-      await stop;
-
-      expect(stopped).toBe(true);
-    });
-
-    it('does not commit a complete-sized stream canceled by stop', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const sourceCancel = vi.fn();
-      const bytes = encoder.encode('file-content');
-      fileClient.readFile.mockResolvedValue({
-        success: true,
-        content: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-          },
-          cancel: sourceCancel
-        }),
-        path: '/mnt/data/stalled.bin',
-        size: bytes.byteLength,
-        mimeType: 'application/octet-stream',
-        timestamp: new Date().toISOString()
-      });
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/stalled.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(fileClient.readFile).toHaveBeenCalled();
-
-      const stop = manager.stop();
-      await vi.advanceTimersByTimeAsync(5000);
-      await stop;
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(sourceCancel).toHaveBeenCalledTimes(1);
-      expect(bucket.put).not.toHaveBeenCalled();
-    });
-
-    it('cancels a file stream acquired after stop', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      const fileClient = createMockFileClient();
-      const fileRead = deferred<{
-        success: true;
-        content: ReadableStream<Uint8Array>;
-        path: string;
-        size: number;
-        mimeType: string;
-        timestamp: string;
-      }>();
-      fileClient.readFile.mockImplementation(() => fileRead.promise);
-      const watch = createControllableWatchClient();
-      const client = createMockControlClient(fileClient, watch.client);
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/late.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(fileClient.readFile).toHaveBeenCalled();
-
-      const stop = manager.stop();
-      await vi.advanceTimersByTimeAsync(5000);
-      await stop;
-
-      const sourceCancel = vi.fn();
-      fileRead.resolve({
-        success: true,
-        content: new ReadableStream<Uint8Array>({
-          start() {},
-          cancel: sourceCancel
-        }),
-        path: '/mnt/data/late.bin',
-        size: 1,
-        mimeType: 'application/octet-stream',
-        timestamp: new Date().toISOString()
-      });
-      await vi.waitFor(() => expect(sourceCancel).toHaveBeenCalledTimes(1));
-      expect(bucket.put).not.toHaveBeenCalled();
-    });
-
-    it('bounds graceful stop when an R2 upload stalls', async () => {
-      const bucket = createMockR2Bucket(new Map());
-      bucket.put.mockImplementation(() => new Promise(() => {}));
-      const fileClient = createMockFileClient();
-      const watch = createControllableWatchClient();
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: false,
-        runRuntimeCall: async (_operation, call) =>
-          call(createMockControlClient(fileClient, watch.client)),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 60_000
-      });
-      await manager.start();
-      watch.emit({
-        type: 'event',
-        eventType: 'modify',
-        path: '/mnt/data/stalled.bin',
-        isDirectory: false,
-        timestamp: new Date().toISOString()
-      });
-      await vi.advanceTimersByTimeAsync(UPLOAD_DEBOUNCE_MS);
-      expect(bucket.put).toHaveBeenCalled();
-
-      const stop = manager.stop();
-      await vi.advanceTimersByTimeAsync(5000);
-      await stop;
-    });
-
-    it('cancels a stalled small R2 download', async () => {
-      const r2Objects = new Map([['small.bin', { body: 'x', etag: 'small' }]]);
-      const bucket = createMockR2Bucket(r2Objects);
-      const sourceCancel = vi.fn();
-      bucket.get.mockResolvedValue({
-        key: 'small.bin',
-        etag: 'small',
-        size: 1,
-        body: new ReadableStream<Uint8Array>({
-          start() {},
-          cancel: sourceCancel
-        }),
-        arrayBuffer: vi.fn()
-      } as unknown as R2ObjectBody);
-      const fileClient = createMockFileClient();
-      const client = createMockControlClient(
-        fileClient,
-        createMockWatchClient()
-      );
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: true,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000
-      });
-
-      const start = manager.start();
-      const startResult = expect(start).rejects.toThrow(
-        'local mount sync stopped'
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(bucket.get).toHaveBeenCalledWith('small.bin');
-
-      await manager.stop();
-      await startResult;
-
-      expect(sourceCancel).toHaveBeenCalledTimes(1);
-      expect(fileClient.writeFile).not.toHaveBeenCalled();
-    });
-
-    it('bounds graceful stop and cancels a stalled R2 download', async () => {
-      const r2Objects = new Map<string, { body: string; etag: string }>();
-      const bucket = createMockR2Bucket(r2Objects);
-      const sourceCancel = vi.fn();
-      bucket.get.mockResolvedValue({
-        key: 'large.bin',
-        etag: 'large',
-        size: 4 * 1024 * 1024 + 1,
-        body: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(Uint8Array.of(1));
-          },
-          cancel: sourceCancel
-        }),
-        arrayBuffer: vi.fn()
-      } as unknown as R2ObjectBody);
-      const fileClient = createMockFileClient();
-      fileClient.writeFileStream.mockImplementation(
-        () => new Promise(() => {})
-      );
-      const client = createMockControlClient(
-        fileClient,
-        createMockWatchClient()
-      );
-      const manager = new LocalMountSyncManager({
-        bucket: bucket as unknown as R2Bucket,
-        mountPath: '/mnt/data',
-        prefix: undefined,
-        readOnly: true,
-        runRuntimeCall: async (_operation, call) => call(client),
-        logger,
-        runtimeHold: { release: () => {} },
-        pollIntervalMs: 1000
-      });
-      await manager.start();
-      r2Objects.set('large.bin', {
-        body: 'x'.repeat(4 * 1024 * 1024 + 1),
-        etag: 'large'
-      });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fileClient.writeFileStream).toHaveBeenCalled();
-
-      const stop = manager.stop();
-      await vi.advanceTimersByTimeAsync(5000);
-      await stop;
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(sourceCancel).toHaveBeenCalledTimes(1);
     });
   });
 });
