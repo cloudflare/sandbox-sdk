@@ -511,6 +511,23 @@ export class PreviewService {
       return this.stalePreviewURLResponse();
     }
 
+    if (result.status === 'failed') {
+      // A failure on the container port, such as a closed connection or no
+      // listener, belongs to the app behind the preview. Answer here, as a
+      // reverse proxy does, so the Worker does not report it as a platform
+      // interruption and the original error is still logged.
+      this.deps.logger.error(
+        'Preview request to container port failed',
+        result.error instanceof Error
+          ? result.error
+          : new Error(String(result.error)),
+        { port, method: request.method }
+      );
+      return new Response(`Could not reach port ${port} in the container`, {
+        status: 502
+      });
+    }
+
     return result.response;
   }
 

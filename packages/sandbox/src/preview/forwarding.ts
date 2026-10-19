@@ -1,4 +1,5 @@
 import { ErrorCode, OperationInterruptedError } from '../errors';
+import { isDurableObjectReset } from '../platform-errors';
 import type { RuntimeLease } from '../runtime';
 
 export type PreviewTCPPort = {
@@ -12,7 +13,8 @@ export type PreviewForwardingLease = Pick<RuntimeLease, 'retain'>;
 
 export type PreviewForwardingResult =
   | { status: 'response'; response: Response }
-  | { status: 'network-lost' };
+  | { status: 'network-lost' }
+  | { status: 'failed'; error: unknown };
 
 export async function forwardPreviewRequest(
   tcpPort: PreviewTCPPort,
@@ -66,13 +68,18 @@ export async function forwardPreviewRequest(
     return { status: 'response', response };
   } catch (error) {
     release();
+    // A runtime change explains whatever the port fetch failed with.
+    if (interruptedError) throw interruptedError;
+    // A reset of this Durable Object is a platform interruption, not a
+    // failure of the app behind the port.
+    if (isDurableObjectReset(error)) throw error;
     if (
       error instanceof Error &&
       error.message.includes('Network connection lost.')
     ) {
       return { status: 'network-lost' };
     }
-    throw error;
+    return { status: 'failed', error };
   }
 }
 
