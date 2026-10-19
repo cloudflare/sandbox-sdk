@@ -3893,7 +3893,7 @@ describe('Sandbox - Automatic Session Management', () => {
         { ownerOnly: true }
       );
       const passwordFilePath = writeFile.mock.calls[0][0];
-      // Containers that predate ownerOnly ignore it, so the chmod stays.
+      // The chmod covers container images that ignore ownerOnly.
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         `chmod 0600 '${passwordFilePath}'`,
         expect.anything(),

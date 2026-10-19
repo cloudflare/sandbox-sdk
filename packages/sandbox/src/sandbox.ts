@@ -2635,8 +2635,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * s3fs refuses support files that other users can read. Create them with
    * mode 0600 so the password file is never readable while it is being
-   * written, and still chmod for containers that predate `ownerOnly` and
-   * ignore it.
+   * written. The chmod covers container images that ignore `ownerOnly`.
    */
   private async writeOwnerOnlyFile(
     path: string,
