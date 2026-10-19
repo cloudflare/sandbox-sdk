@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   buildMessage,
   logCanonicalEvent,
   resolveLogLevel
 } from '../../src/logger/canonical';
+import type { CanonicalEventPayload } from '../../src/logger/canonical.types';
 import type { Logger } from '../../src/logger/types';
 
 function createMockLogger(): Logger & {
@@ -23,38 +24,38 @@ function createMockLogger(): Logger & {
 }
 
 describe('buildMessage', () => {
-  it('formats command success', () => {
+  it('formats exec success with the executable only', () => {
     const msg = buildMessage({
       event: 'sandbox.exec',
       outcome: 'success',
       durationMs: 12,
-      command: 'cat /workspace/file.txt'
+      argv0: 'cat',
+      argCount: 1
     });
-    expect(msg).toBe('sandbox.exec success cat /workspace/file.txt (12ms)');
+    expect(msg).toBe('sandbox.exec success cat (12ms)');
   });
 
-  it('formats command error with reason', () => {
+  it('formats exec error with reason', () => {
     const msg = buildMessage({
-      event: 'command.exec',
+      event: 'sandbox.exec',
       outcome: 'error',
       durationMs: 1001,
-      command: 'sleep 30',
+      argv0: 'sleep',
       errorMessage: 'timeout after 1000ms'
     });
     expect(msg).toBe(
-      'command.exec error sleep 30 \u2014 timeout after 1000ms (1001ms)'
+      'sandbox.exec error sleep \u2014 timeout after 1000ms (1001ms)'
     );
   });
 
-  it('formats command error with exit code', () => {
+  it('formats error with exit code', () => {
     const msg = buildMessage({
-      event: 'command.exec',
+      event: 'process.complete',
       outcome: 'error',
       durationMs: 5,
-      command: 'exit 1',
       exitCode: 1
     });
-    expect(msg).toBe('command.exec error exit 1 \u2014 exitCode=1 (5ms)');
+    expect(msg).toBe('process.complete error \u2014 exitCode=1 (5ms)');
   });
 
   it('formats file write with size', () => {
@@ -87,33 +88,6 @@ describe('buildMessage', () => {
       containerVersion: '0.7.20'
     });
     expect(msg).toBe('version.check sdk=0.7.20 container=0.7.20');
-  });
-
-  it('truncates long commands', () => {
-    const longCmd = `echo ${'a'.repeat(200)}`;
-    const msg = buildMessage({
-      event: 'sandbox.exec',
-      outcome: 'success',
-      durationMs: 10,
-      command: longCmd
-    });
-    expect(msg).toContain('...');
-    expect(msg.length).toBeLessThan(longCmd.length + 50);
-  });
-
-  it('redacts presigned URLs in commands', () => {
-    const cmd =
-      'curl "https://bucket.r2.example.com/file?X-Amz-Credential=AKID&X-Amz-Signature=SIG"';
-    const msg = buildMessage({
-      event: 'sandbox.exec',
-      outcome: 'success',
-      durationMs: 5,
-      command: cmd
-    });
-    expect(msg).toContain('X-Amz-Credential=REDACTED');
-    expect(msg).toContain('X-Amz-Signature=REDACTED');
-    expect(msg).not.toContain('AKID');
-    expect(msg).not.toContain('SIG');
   });
 
   it('formats backup event with backupId', () => {
@@ -153,8 +127,7 @@ describe('logCanonicalEvent', () => {
     logCanonicalEvent(logger, {
       event: 'sandbox.exec',
       outcome: 'success',
-      durationMs: 12,
-      command: 'ls'
+      durationMs: 12
     });
     expect(logger.info).toHaveBeenCalledOnce();
     const [message, context] = logger.info.mock.calls[0];
@@ -172,7 +145,6 @@ describe('logCanonicalEvent', () => {
       event: 'sandbox.exec',
       outcome: 'error',
       durationMs: 100,
-      command: 'bad-cmd',
       errorMessage: 'something broke',
       error: err
     });
@@ -190,21 +162,6 @@ describe('logCanonicalEvent', () => {
     expect(logger.info).not.toHaveBeenCalled();
   });
 
-  it('sets commandTruncated when command is long', () => {
-    const logger = createMockLogger();
-    const longCmd = `echo ${'x'.repeat(200)}`;
-    logCanonicalEvent(logger, {
-      event: 'sandbox.exec',
-      outcome: 'success',
-      durationMs: 1,
-      command: longCmd
-    });
-    const [, context] = logger.info.mock.calls[0];
-    expect(context.commandTruncated).toBe(true);
-    expect(context.command).toContain('...');
-    expect(context.command.length).toBeLessThan(longCmd.length);
-  });
-
   it('auto-derives errorMessage from error.message when not explicitly set', () => {
     const logger = createMockLogger();
     const err = new Error('connection refused');
@@ -212,7 +169,6 @@ describe('logCanonicalEvent', () => {
       event: 'sandbox.exec',
       outcome: 'error',
       durationMs: 50,
-      command: 'curl localhost',
       error: err
     });
     expect(logger.error).toHaveBeenCalledOnce();
@@ -228,7 +184,6 @@ describe('logCanonicalEvent', () => {
       event: 'sandbox.exec',
       outcome: 'error',
       durationMs: 50,
-      command: 'curl localhost',
       errorMessage: 'domain-specific reason',
       error: err
     });
@@ -238,19 +193,11 @@ describe('logCanonicalEvent', () => {
     expect(context.errorMessage).toBe('domain-specific reason');
   });
 
-  it('redacts command field in emitted context', () => {
-    const logger = createMockLogger();
-    logCanonicalEvent(logger, {
-      event: 'sandbox.exec',
-      outcome: 'success',
-      durationMs: 1,
-      command: 'curl https://user:pass@example.com/file?token=secret123'
-    });
-    const [, context] = logger.info.mock.calls[0];
-    expect(context.command).toContain('******@');
-    expect(context.command).toContain('token=REDACTED');
-    expect(context.command).not.toContain('user:pass');
-    expect(context.command).not.toContain('secret123');
+  it('cannot carry command text or process output', () => {
+    expectTypeOf<CanonicalEventPayload['command']>().toEqualTypeOf<undefined>();
+    expectTypeOf<
+      CanonicalEventPayload['stderrPreview']
+    >().toEqualTypeOf<undefined>();
   });
 
   it('redacts presigned URL credentials in errorMessage', () => {
@@ -443,7 +390,6 @@ describe('logCanonicalEvent level dispatch', () => {
       event: 'command.exec',
       outcome: 'success',
       durationMs: 5,
-      command: 'mkdir -p /var/backups',
       origin: 'internal'
     });
     expect(logger.debug).toHaveBeenCalledOnce();

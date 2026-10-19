@@ -40,8 +40,7 @@ export {
 export {
   redactCommand,
   redactCredentials,
-  redactSensitiveParams,
-  truncateForLog
+  redactSensitiveParams
 } from './logger/sanitize.js';
 // Export process control types
 export type {

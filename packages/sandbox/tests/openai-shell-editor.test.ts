@@ -71,9 +71,15 @@ describe('Shell', () => {
     });
     expect(shell.results).toHaveLength(1);
     expect(loggerSpies.info).toHaveBeenCalledWith(
-      'Command completed successfully',
-      { command: 'echo hello' }
+      'Command completed successfully'
     );
+    const logged = JSON.stringify([
+      loggerSpies.debug.mock.calls,
+      loggerSpies.info.mock.calls,
+      loggerSpies.warn.mock.calls,
+      loggerSpies.error.mock.calls
+    ]);
+    expect(logged).not.toContain('echo hello');
   });
 
   it('preserves signal termination as a numeric exit outcome', async () => {
@@ -101,7 +107,7 @@ describe('Shell', () => {
     expect(shell.results[0].exitCode).toBe(143);
     expect(loggerSpies.warn).toHaveBeenCalledWith(
       'Command failed with exit code 143',
-      expect.objectContaining({ command: 'sleep 10' })
+      expect.not.objectContaining({ command: expect.anything() })
     );
   });
 
@@ -127,10 +133,7 @@ describe('Shell', () => {
     expect(loggerSpies.error).toHaveBeenCalledWith(
       'Command timed out',
       undefined,
-      expect.objectContaining({
-        command: 'sleep 1',
-        timeout: 25
-      })
+      { timeout: 25 }
     );
   });
 });
@@ -236,6 +239,38 @@ describe('Editor', () => {
       { path: 'missing.txt' }
     );
   });
+
+  it.each([
+    ['create_file', 'createFile'],
+    ['update_file', 'updateFile']
+  ] as const)(
+    'logs %s patch failures without patch text',
+    async (type, method) => {
+      applyDiffMock.mockImplementationOnce(() => {
+        throw new Error('Invalid Add File Line: API_KEY=tok-secret');
+      });
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        readFile: vi.fn().mockResolvedValue({ content: 'original content' })
+      };
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
+      const operation = { type, path: '.env', diff: '+API_KEY=tok-secret' };
+
+      await expect(editor[method](operation as never)).rejects.toThrow(
+        'tok-secret'
+      );
+
+      expect(editor.results[0].error).toContain('tok-secret');
+      expect(loggerSpies.error).toHaveBeenCalledWith(
+        expect.stringMatching(/^Failed to (create|update) file$/),
+        undefined,
+        { path: '.env' }
+      );
+      expect(JSON.stringify(loggerSpies.error.mock.calls)).not.toContain(
+        'tok-secret'
+      );
+    }
+  );
 
   describe('Path traversal security', () => {
     it('should reject path traversal attempts with ../', async () => {
