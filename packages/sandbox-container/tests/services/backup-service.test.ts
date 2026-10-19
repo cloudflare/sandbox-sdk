@@ -436,8 +436,9 @@ describe('BackupService', () => {
     expect(squashCommand).toContain("-ef '/var/backups/test.sqsh.exclude'");
     expect(writeExcludeCommand).toContain("'node_modules/a.txt'");
     expect(writeExcludeCommand).toContain("'build output/日本語 file.txt'");
-    expect(writeExcludeCommand).toContain("'... node_modules/a.txt'");
-    expect(writeExcludeCommand).toContain("'... build output/日本語 file.txt'");
+    // Git paths are root-relative. mksquashfs 4.5 applies "... a/b" to all
+    // of "a", which would drop files Git does not ignore.
+    expect(writeExcludeCommand).not.toContain("'... ");
   });
 
   it('defaults to including gitignored files when gitignore is omitted', async () => {
@@ -591,7 +592,6 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toContain("'backup-2024\\*.log'");
     expect(writeExcludeCommand).toContain("'q\\?.txt'");
     expect(writeExcludeCommand).toContain("'folder\\\\name.txt'");
-    expect(writeExcludeCommand).toContain("'... config\\[1\\].json'");
   });
 
   it('applies user-provided excludes patterns', async () => {
@@ -625,7 +625,7 @@ describe('BackupService', () => {
       archivePath,
       'default',
       false,
-      ['node_modules', '*.log']
+      ['node_modules', '*.log', 'dist/', '.cache/foo/*/node_modules']
     );
     expect(result.success).toBe(true);
 
@@ -648,6 +648,11 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toContain("'... node_modules'");
     expect(writeExcludeCommand).toContain("'*.log'");
     expect(writeExcludeCommand).toContain("'... *.log'");
+    expect(writeExcludeCommand).toContain("'... dist/'");
+    // Patterns with a slash stay root-relative. mksquashfs 4.5 applies
+    // "... a/b" to all of "a".
+    expect(writeExcludeCommand).toContain("'.cache/foo/*/node_modules'");
+    expect(writeExcludeCommand).not.toContain("'... .cache");
 
     // git should not be invoked when gitignore is false
     expect(
@@ -758,9 +763,10 @@ describe('BackupService', () => {
 
     // Patterns should be normalized: no ** prefixes
     expect(writeExcludeCommand).toContain("'node_modules/.cache'");
-    expect(writeExcludeCommand).toContain("'... node_modules/.cache'");
+    expect(writeExcludeCommand).not.toContain("'... node_modules/.cache'");
     expect(writeExcludeCommand).toContain("'.next/cache'");
     expect(writeExcludeCommand).toContain("'.turbo'");
+    expect(writeExcludeCommand).toContain("'... .turbo'");
     expect(writeExcludeCommand).toContain("'dist'");
 
     // Original ** patterns must NOT appear

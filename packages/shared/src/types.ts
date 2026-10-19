@@ -1170,9 +1170,13 @@ export interface BackupOptions {
   gitignore?: boolean;
   /**
    * Glob patterns to exclude from the backup.
-   * These are passed directly to mksquashfs as wildcard exclude patterns.
+   * A single-component pattern, such as `node_modules`, `dist/`, or `*.log`,
+   * matches at any depth. A multi-component pattern, such as `build/output`,
+   * matches only relative to `dir`. mksquashfs does not support `**`, so `**`
+   * components are removed and do not make a multi-component pattern match at
+   * any depth.
    *
-   * @example ['node_modules', '*.log', '.cache']
+   * @example ['node_modules', '*.log', '.cache', 'build/output']
    */
   excludes?: string[];
   /**
