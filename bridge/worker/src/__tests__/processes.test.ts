@@ -133,6 +133,7 @@ describe('process routes', () => {
       replay: true,
       follow: true
     });
+    expect(process[Symbol.dispose]).toHaveBeenCalledOnce();
     expect(events).toEqual([
       {
         type: 'stdout',

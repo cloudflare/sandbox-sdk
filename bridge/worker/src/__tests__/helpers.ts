@@ -46,7 +46,8 @@ export function createMockProcess(overrides: Partial<ProcessStatus> & { logs?: P
     waitForExit: vi.fn(async () => (status.state === 'exited' ? status.exit : { code: 0, timedOut: false })),
     waitForLog: vi.fn(),
     waitForPort: vi.fn(),
-    kill: vi.fn(async () => {})
+    kill: vi.fn(async () => {}),
+    [Symbol.dispose]: vi.fn()
   };
 }
 
@@ -68,7 +69,8 @@ export function createMockTerminal(overrides: Partial<TerminalSnapshot> = {}) {
     waitForExit: vi.fn(async () => snapshot.exit ?? { code: 0, timedOut: false }),
     interrupt: vi.fn(async () => {}),
     terminate: vi.fn(async () => {}),
-    connect: vi.fn(async () => new Response(null, { status: 200 }))
+    connect: vi.fn(async () => new Response(null, { status: 200 })),
+    [Symbol.dispose]: vi.fn()
   };
 }
 

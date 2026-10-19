@@ -66,11 +66,18 @@ export function registerProcessRoutes(
 
     const replay = parseBoolean(c.req.query('replay'));
     const follow = parseBoolean(c.req.query('follow'));
-    const logs = await process.logs({
-      since: c.req.query('since'),
-      replay,
-      follow
-    });
+    let logs: ReadableStream<ProcessLogEvent>;
+    try {
+      logs = await process.logs({
+        since: c.req.query('since'),
+        replay,
+        follow
+      });
+    } finally {
+      // The log stream outlives the handle; release the handle's stub now
+      // rather than holding it for the life of this streaming response.
+      process[Symbol.dispose]();
+    }
     return new Response(processLogsToSSE(logs), {
       headers: {
         'Content-Type': 'text/event-stream',

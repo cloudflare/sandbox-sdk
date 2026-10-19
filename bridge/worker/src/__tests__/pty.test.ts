@@ -95,6 +95,7 @@ describe('terminal bridge routes', () => {
     expect(mockSandbox.getTerminal).toHaveBeenCalledWith('mock-terminal');
     const [, connectOptions] = terminal.connect.mock.calls[0] as [Request, Record<string, unknown>];
     expect(connectOptions).toEqual({ cursor: 'abc', cols: 120, rows: 30 });
+    expect(terminal[Symbol.dispose]).toHaveBeenCalledOnce();
   });
 
   it('passes through the terminal connect Response', async () => {

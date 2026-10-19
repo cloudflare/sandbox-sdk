@@ -46,10 +46,18 @@ describe('process capability Workers RPC', () => {
       );
 
     const process = await remoteProcess();
+    let logs: ReadableStream<ProcessLogEvent>;
     {
       using handle = process;
       await expect(handle.status()).resolves.toMatchObject({ id: 'p1' });
+      logs = await handle.logs();
     }
+
+    // A log stream opened through the handle outlives it
+    await expect(logs.getReader().read()).resolves.toEqual({
+      done: true,
+      value: undefined
+    });
 
     // Wrap the RPC promise so expect() cannot pipeline calls through it.
     await expect(Promise.resolve(process.status())).rejects.toThrow(/disposed/);
