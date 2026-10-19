@@ -99,7 +99,7 @@ npm run check
 npm test
 ```
 
-[Testing](docs/testing.md) explains what these commands check, how to build behind a TLS-inspecting proxy, and how to test in production. [Releasing](docs/releasing.md) explains how maintainers publish the package and its image.
+[Testing](docs/testing.md) explains what these commands check, how to build behind a TLS-inspecting proxy, and how to test in production. [Releasing](docs/releasing.md) explains how to describe a change for the release notes, and how maintainers publish the package and its image.
 
 ## License
 
