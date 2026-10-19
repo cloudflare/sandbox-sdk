@@ -73,9 +73,13 @@ describe('Shell', () => {
     expect(loggerSpies.info).toHaveBeenCalledWith(
       'Command completed successfully'
     );
-    expect(JSON.stringify(loggerSpies.info.mock.calls)).not.toContain(
-      'echo hello'
-    );
+    const logged = JSON.stringify([
+      loggerSpies.debug.mock.calls,
+      loggerSpies.info.mock.calls,
+      loggerSpies.warn.mock.calls,
+      loggerSpies.error.mock.calls
+    ]);
+    expect(logged).not.toContain('echo hello');
   });
 
   it('preserves signal termination as a numeric exit outcome', async () => {

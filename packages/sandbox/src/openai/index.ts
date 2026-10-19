@@ -79,13 +79,13 @@ export class Shell implements OpenAIShell {
 
   async run(action: ShellAction): Promise<ShellResult> {
     this.logger.debug('SandboxShell.run called', {
-      commands: action.commands,
+      commandCount: action.commands.length,
       timeout: action.timeoutMs
     });
     const output: ShellResult['output'] = [];
 
     for (const command of action.commands) {
-      this.logger.debug('Executing command', { command, cwd: this.cwd });
+      this.logger.debug('Executing command', { cwd: this.cwd });
       let stdout = '';
       let stderr = '';
       let exitCode: number | null = 0;

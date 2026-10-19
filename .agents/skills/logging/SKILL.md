@@ -59,7 +59,7 @@ Don't construct real loggers in unit tests — they add noise and can mask real 
 
 ## Never Log Caller Data
 
-Logs never contain data the caller passes through the SDK: command text, argument values, environment variable values, stdout/stderr, file contents, or request bodies. Commands and output can carry secrets anywhere, so no redaction pattern makes them safe. This holds at every level, including debug, and for plain `logger.*` calls as well as `logCanonicalEvent()`.
+Logs never contain free-form data the caller passes through the SDK: command text, argument values, environment variable values, stdout/stderr, file contents, or request bodies. Commands and output can carry secrets anywhere, so no redaction pattern makes them safe. This holds at every level, including debug, and for plain `logger.*` calls as well as `logCanonicalEvent()`.
 
 Describe the operation instead: IDs (`processId`, `commandId`, `sessionId`), outcome, `exitCode`, `durationMs`, sizes and lengths (`sizeBytes`, `stdoutLen`, `stderrLen`), file paths and ports, and names the SDK chose (event names, environment variable keys). `sandbox.exec` also logs `argv0`, the executable name, which is low-risk and says what ran; argument values stay out. `CanonicalEventPayload` types `command` and `stderrPreview` as `never`; keep new fields to the same rule. Callers who want command text in their logs log it in their own Worker.
 
