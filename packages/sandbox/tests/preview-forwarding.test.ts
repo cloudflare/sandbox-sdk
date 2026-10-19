@@ -194,6 +194,23 @@ describe('forwardPreviewRequest', () => {
     expect(lease.release).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    'Durable Object reset because its code was updated.',
+    'Internal error while starting up Durable Object storage caused object to be reset.'
+  ])('rethrows a Durable Object reset: %s', async (message) => {
+    const lease = createLease();
+    const tcpFetch = vi.fn().mockRejectedValue(new Error(message));
+
+    await expect(
+      forwardPreviewRequest(
+        { fetch: tcpFetch },
+        new Request('http://localhost:8080/'),
+        lease.lease
+      )
+    ).rejects.toThrow(message);
+    expect(lease.release).toHaveBeenCalledTimes(1);
+  });
+
   it('reports an interruption when the runtime changes before the port fetch fails', async () => {
     const lease = createLease();
     const tcpFetch = vi.fn().mockImplementation(async () => {

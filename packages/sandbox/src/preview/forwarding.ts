@@ -1,4 +1,5 @@
 import { ErrorCode, OperationInterruptedError } from '../errors';
+import { isDurableObjectReset } from '../platform-errors';
 import type { RuntimeLease } from '../runtime';
 
 export type PreviewTCPPort = {
@@ -69,6 +70,9 @@ export async function forwardPreviewRequest(
     release();
     // A runtime change explains whatever the port fetch failed with.
     if (interruptedError) throw interruptedError;
+    // A reset of this Durable Object is a platform interruption, not a
+    // failure of the app behind the port.
+    if (isDurableObjectReset(error)) throw error;
     if (
       error instanceof Error &&
       error.message.includes('Network connection lost.')
