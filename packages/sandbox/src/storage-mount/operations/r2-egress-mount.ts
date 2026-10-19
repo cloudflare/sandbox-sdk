@@ -84,15 +84,6 @@ export async function mountR2EgressBucket(
     const lifecycle = await context.lifecycle.capture(context.runtime);
     passwordFilePath = generatePasswordFilePath();
     additionalHeaderFilePath = generateS3FSAdditionalHeaderFilePath();
-    await createPasswordFile(context.s3fsHost, passwordFilePath, bucket, {
-      accessKeyId: 'x',
-      secretAccessKey: 'x'
-    });
-    await createDisableExpectHeaderFile(
-      context.s3fsHost,
-      additionalHeaderFilePath
-    );
-
     mountInfo = {
       mountId: crypto.randomUUID(),
       mountType: 'r2-egress',
@@ -104,19 +95,28 @@ export async function mountR2EgressBucket(
       prefix,
       readOnly: options.readOnly ?? false
     };
-    await configureR2EgressOutbound(context.getOutboundHost(), {
-      buckets: {
-        ...buildR2EgressParams(context.registry).buckets,
-        [bucket]: {
-          prefix,
-          readOnly: options.readOnly ?? false
-        }
-      }
-    });
 
-    await context.runRuntimeCall('mount.ensureDirectory', (control) =>
-      control.mounts.ensureDirectory(mountPath)
-    );
+    // Mounts run one at a time, so each round trip here adds to every later
+    // mount. These steps are independent; only s3fs needs all of them.
+    await allOrFirstError([
+      createPasswordFile(context.s3fsHost, passwordFilePath, bucket, {
+        accessKeyId: 'x',
+        secretAccessKey: 'x'
+      }),
+      createDisableExpectHeaderFile(context.s3fsHost, additionalHeaderFilePath),
+      configureR2EgressOutbound(context.getOutboundHost(), {
+        buckets: {
+          ...buildR2EgressParams(context.registry).buckets,
+          [bucket]: {
+            prefix,
+            readOnly: options.readOnly ?? false
+          }
+        }
+      }),
+      context.runRuntimeCall('mount.ensureDirectory', (control) =>
+        control.mounts.ensureDirectory(mountPath)
+      )
+    ]);
 
     s3fsStarted = true;
     await executeS3FSMount(context.s3fsHost, {
@@ -213,4 +213,16 @@ export async function mountR2EgressBucket(
       error: mountError
     });
   }
+}
+
+/**
+ * Like `Promise.all`, but waits for every step to settle before rejecting, so
+ * cleanup never runs while a support-file write or route update is in flight.
+ */
+async function allOrFirstError(steps: Promise<unknown>[]): Promise<void> {
+  const results = await Promise.allSettled(steps);
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (failure) throw failure.reason;
 }
