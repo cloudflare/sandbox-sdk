@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Report failed parallel backup downloads as recoverable restore errors without terminating the backup session shell, so cleanup can complete and callers can retry restore.
+Fix `restoreBackup()` error reporting for archives of 10 MB or more. A failed download part now throws a `BackupRestoreError` that includes curl's error output, instead of a `Shell terminated unexpectedly` session error.

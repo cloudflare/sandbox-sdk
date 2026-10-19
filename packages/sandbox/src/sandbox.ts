@@ -6733,8 +6733,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
       ].join('; ');
 
-      // The child shell owns the script's explicit exit; the persistent backup
-      // session observes only the resulting command status.
+      // Run the script in a subshell. execWithSession evaluates commands in
+      // the session's long-lived shell, so a top-level `exit 1` would kill the
+      // session and discard curl's stderr instead of returning a failed result.
       const result = await this.execWithSession(
         `( ${script} )`,
         backupSession,
