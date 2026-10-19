@@ -19,14 +19,8 @@ export function buildPreviewProxyRequest(
   headers.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
   headers.set('X-Sandbox-Name', sandboxName ?? sandboxId);
 
-  const upgradeHeader = request.headers.get('Upgrade');
-  if (upgradeHeader?.toLowerCase() === 'websocket') {
-    return new Request(request, {
-      headers,
-      redirect: 'manual'
-    });
-  }
-
+  // WebSocket upgrades take the same localhost URL as other requests, so the
+  // app sees one Host. The Upgrade header carries the upgrade semantics.
   return new Request(proxyURL, {
     method: request.method,
     headers,
