@@ -16,7 +16,8 @@ use super::extract::Extractor;
 use super::lifeline::Lifeline;
 use super::sys::{self, MountId};
 use super::transfer::{self, Gateway, PART_SIZE, RangeReader};
-use super::{Failure, Session, absolute, file_failure, hex};
+use super::{Failure, Session, absolute, file_failure};
+use crate::hex;
 use crate::mountinfo::{self, MountEntry};
 
 const SIBLING_PREFIX: &str = ".sandbox-restore-";
@@ -167,7 +168,7 @@ impl<'a> Sibling<'a> {
     /// Removes what earlier restores into the same target left behind, then creates a sibling
     /// named after the target, so that the next restore finds it.
     fn create(target: &'a Target) -> Result<Self, Failure> {
-        let tag = &hex(&Sha256::digest(target.name.as_bytes()))[..8];
+        let tag = &hex::encode(&Sha256::digest(target.name.as_bytes()))[..8];
         let prefix = format!("{SIBLING_PREFIX}{tag}-");
         sweep(target, &prefix);
         let name = format!("{prefix}{}", random_hex()?);
@@ -293,7 +294,7 @@ fn random_hex() -> Result<String, Failure> {
     if count != bytes.len() as isize {
         return Err(file_failure(io::Error::last_os_error(), b"getrandom"));
     }
-    Ok(hex(&bytes))
+    Ok(hex::encode(&bytes))
 }
 
 #[cfg(test)]

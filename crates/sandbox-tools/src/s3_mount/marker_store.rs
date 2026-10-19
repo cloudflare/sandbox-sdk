@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::model::{ControlError, Marker, PROTOCOL_VERSION, validate_marker};
+use crate::hex;
 
 #[derive(Debug)]
 pub(super) enum StoredMarker {
@@ -108,8 +109,7 @@ pub(super) fn support_dir(control_root: &Path, route_id: &str) -> PathBuf {
 }
 
 fn path_hash(path: &Path) -> String {
-    let digest = Sha256::digest(path.as_os_str().as_bytes());
-    format!("{digest:x}")
+    hex::encode(&Sha256::digest(path.as_os_str().as_bytes()))
 }
 
 pub(super) struct PathLock(File);

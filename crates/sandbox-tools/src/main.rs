@@ -1,5 +1,6 @@
 mod directory_backup;
 mod files;
+mod hex;
 mod http;
 mod mountinfo;
 mod protocol;
