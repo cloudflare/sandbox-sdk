@@ -25,6 +25,7 @@ console.log(process.id, process.pid, output.stdout, output.exitCode);
 - `getProcess()` and `listProcesses()` do not wake a sleeping Sandbox. With no active runtime they return `null` and `[]`.
 - `cwd` is selected per launch. Each process and terminal inherits the complete container environment, then applies `env` as an overlay. The overlay does not mutate later launches; the execution layer intentionally does not curate inherited variables because commands share the Sandbox trust boundary.
 - Active processes and terminals pin the live Sandbox so work can continue after the Worker request ends.
+- Process and terminal handles returned to a Worker hold a Workers RPC reference to the Sandbox. Release it with `using` (or `handle[Symbol.dispose]()`) once the handle is no longer needed. Disposal never stops the process or terminal, and `getProcess()` or `getTerminal()` returns a fresh handle.
 - Handles, IDs, PIDs, statuses, logs, and cursors belong to one runtime. After sleep, restart, or replacement, discovery cannot recover them and an old handle fails with `STALE_PROCESS_HANDLE` instead of controlling a replacement runtime.
 
 ## Logs and cursors

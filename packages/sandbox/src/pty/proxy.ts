@@ -68,7 +68,8 @@ export function terminalHandle(
   stub: TerminalHandleStub,
   snapshot: TerminalSnapshot,
   runtimeIncarnationID?: string,
-  outputProtocol: 'stream' | 'pull' = 'stream'
+  outputProtocol: 'stream' | 'pull' = 'stream',
+  release: () => void = () => undefined
 ): Terminal {
   const id = snapshot.id;
   return {
@@ -93,7 +94,8 @@ export function terminalHandle(
         ...options,
         runtimeIncarnationID
       });
-    }
+    },
+    [Symbol.dispose]: release
   };
 }
 
@@ -115,7 +117,9 @@ export function terminalHandleFromRPCDescriptor(
     stub,
     descriptor.snapshot,
     descriptor.runtimeIncarnationID,
-    'pull'
+    'pull',
+    // A Workers RPC stub is disposable; the in-object target is not.
+    () => (capability as Partial<Disposable>)[Symbol.dispose]?.()
   );
 }
 

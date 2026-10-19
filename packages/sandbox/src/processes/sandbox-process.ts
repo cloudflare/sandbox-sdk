@@ -192,6 +192,12 @@ export class SandboxProcessImpl implements SandboxProcess {
     return this.capability.kill(signal);
   }
 
+  /** Releases the RPC stub to the process. The process keeps running. */
+  [Symbol.dispose](): void {
+    // A Workers RPC stub is disposable; the in-object target is not.
+    (this.capability as Partial<Disposable>)[Symbol.dispose]?.();
+  }
+
   private async consumeLogs<T>(
     signal: AbortSignal,
     consume: (

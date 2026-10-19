@@ -69,6 +69,8 @@ export interface SandboxProcess {
   output(options?: ProcessOutputOptions): Promise<ProcessOutput<Uint8Array>>;
   waitForPort(port: number, options?: WaitForPortOptions): Promise<void>;
   kill(signal?: number): Promise<void>;
+  /** Releases this handle's RPC reference. The process keeps running. */
+  [Symbol.dispose](): void;
 }
 
 /**

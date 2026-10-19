@@ -709,6 +709,26 @@ describe('getSandbox', () => {
       expect(mockStub.listTerminals).toHaveBeenCalledOnce();
     });
 
+    it('disposes the terminal capability stub with the handle', async () => {
+      const dispose = vi.fn();
+      mockStub.getTerminal = vi.fn(async () => ({
+        snapshot: {
+          id: 'terminal-a',
+          command: ['bash'],
+          status: 'running'
+        },
+        runtimeIncarnationID: 'runtime-a',
+        capability: { [Symbol.dispose]: dispose }
+      }));
+      const sandbox = getSandbox({} as any, 'test-sandbox');
+
+      {
+        using _terminal = await sandbox.getTerminal('terminal-a');
+      }
+
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
     it('forwards terminal interrupt and terminate through handle methods', async () => {
       mockStub.getTerminal = vi.fn(async () => ({
         snapshot: {
