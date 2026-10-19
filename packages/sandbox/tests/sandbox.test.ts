@@ -1529,7 +1529,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('preserves WebSocket preview proxy requests when forwarding', async () => {
+    it('forwards WebSocket preview requests to localhost like other requests', async () => {
       const tcpFetch = vi
         .fn()
         .mockResolvedValue(new Response('preview websocket ok'));
@@ -1539,13 +1539,11 @@ describe('Sandbox - Automatic Session Management', () => {
         .mockReturnValue({ fetch: tcpFetch });
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
 
-      const request = createPreviewWebSocketRequest();
-
-      await sandbox.fetch(request);
+      await sandbox.fetch(createPreviewWebSocketRequest());
 
       expect(tcpFetch).toHaveBeenCalledTimes(1);
+      expect(tcpFetch.mock.calls[0][0]).toBe('http://localhost:8080/ws');
       const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
-      expect(forwardedRequest.url).toBe(request.url);
       expect(forwardedRequest.headers.get('Upgrade')).toBe('websocket');
       expect(forwardedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(forwardedRequest.headers.get('Sec-WebSocket-Key')).toBe(
