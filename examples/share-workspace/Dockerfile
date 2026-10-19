@@ -2,7 +2,7 @@
 # Keep its tag equal to the installed @cloudflare/sandbox version.
 ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.1
 FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
-FROM cloudflare/cloudflared:2026.3.0 AS cloudflared
+FROM cloudflare/cloudflared:2026.10.1 AS cloudflared
 
 # python3 gives the example a server to share. Use your own servers instead.
 FROM debian:trixie-slim
