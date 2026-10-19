@@ -139,8 +139,9 @@ export function validateSessionId(id: string): string | null {
 /**
  * Convert an SSE stream from readFileStream() into a raw byte stream.
  * Decodes base64 chunks for binary files and UTF-8-encodes text chunks.
- * The first SSE event is consumed before the stream is returned, so the caller
- * can map early stream errors onto the HTTP response.
+ * Reads up to the first chunk before returning. A missing file arrives as an
+ * error event inside a successful stream, so it rejects here, while the caller
+ * can still choose the HTTP status.
  */
 export async function sseToByteStream(
   sse: ReadableStream<Uint8Array>

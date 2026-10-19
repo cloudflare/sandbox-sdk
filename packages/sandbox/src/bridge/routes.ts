@@ -624,6 +624,8 @@ export function createBridgeApp(config: RouteConfig): Hono<BridgeHonoEnv> {
       } catch (err) {
         const code = (err as { code?: string }).code;
         const msg = err instanceof Error ? err.message : String(err);
+        // A missing file arrives as an SSE error event, which carries only the
+        // container's "File not found: <path>" message and no error code.
         if (
           code === 'FILE_NOT_FOUND' ||
           msg.toLowerCase().includes('file not found')
