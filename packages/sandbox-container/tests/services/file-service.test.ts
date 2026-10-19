@@ -1492,6 +1492,45 @@ describe('FileService', () => {
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
 
+    it('should preserve invalid UTF-8 bytes when base64 streaming is requested', async () => {
+      const testPath = '/tmp/invalid-utf8.txt';
+      const rawBytes = new Uint8Array([0x66, 0x6f, 0x80, 0x6f]);
+      mockBunFile({
+        exists: true,
+        size: rawBytes.byteLength,
+        type: 'text/plain',
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(rawBytes);
+            controller.close();
+          }
+        })
+      });
+
+      const stream = await fileService.readFileStreamOperation(
+        testPath,
+        'session-123',
+        'base64'
+      );
+      const allData = await new Response(stream).text();
+      const sseEvents = allData
+        .split('\n\n')
+        .filter((event) => event.startsWith('data: '))
+        .map((event) => JSON.parse(event.replace('data: ', '')));
+
+      expect(sseEvents[0]).toEqual({
+        type: 'metadata',
+        mimeType: 'text/plain',
+        size: rawBytes.byteLength,
+        isBinary: true,
+        encoding: 'base64'
+      });
+      const decoded = Uint8Array.from(atob(sseEvents[1].data), (character) =>
+        character.charCodeAt(0)
+      );
+      expect(decoded).toEqual(rawBytes);
+    });
+
     it('should return error event when file does not exist', async () => {
       mockBunFile({ exists: false });
 

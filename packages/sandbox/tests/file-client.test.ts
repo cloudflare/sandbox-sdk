@@ -355,6 +355,38 @@ database:
       );
     });
 
+    it('should request base64 chunks when specified', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.close();
+            }
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' }
+          }
+        )
+      );
+
+      await client.readFileStream('/app/test.txt', 'session-stream', {
+        encoding: 'base64'
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/read/stream'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            path: '/app/test.txt',
+            sessionId: 'session-stream',
+            encoding: 'base64'
+          })
+        })
+      );
+    });
+
     it('should handle binary file streams', async () => {
       const mockStream = new ReadableStream({
         start(controller) {

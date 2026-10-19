@@ -1577,7 +1577,8 @@ export class FileService implements FileSystemOperations {
    */
   async readFileStreamOperation(
     path: string,
-    sessionId = 'default'
+    sessionId = 'default',
+    encoding?: string
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -1623,6 +1624,7 @@ export class FileService implements FileSystemOperations {
         }
 
         const metadata = metadataResult.data;
+        const streamAsBinary = encoding === 'base64' || metadata.isBinary;
 
         const fileStream = Bun.file(absolutePath).stream();
 
@@ -1638,8 +1640,8 @@ export class FileService implements FileSystemOperations {
               type: 'metadata',
               mimeType: metadata.mimeType,
               size: metadata.size,
-              isBinary: metadata.isBinary,
-              encoding: metadata.encoding
+              isBinary: streamAsBinary,
+              encoding: streamAsBinary ? 'base64' : metadata.encoding
             };
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
@@ -1656,7 +1658,7 @@ export class FileService implements FileSystemOperations {
               const slice = combined.subarray(offset, offset + CHUNK_SIZE);
               emitChunk(
                 slice,
-                metadata.isBinary,
+                streamAsBinary,
                 encoder,
                 decoder,
                 controller,
@@ -1673,7 +1675,7 @@ export class FileService implements FileSystemOperations {
             if (carry.length > 0) {
               emitChunk(
                 carry,
-                metadata.isBinary,
+                streamAsBinary,
                 encoder,
                 decoder,
                 controller,
@@ -1682,7 +1684,7 @@ export class FileService implements FileSystemOperations {
               totalBytesEmitted += carry.length;
               carry = new Uint8Array(0);
             }
-            if (!metadata.isBinary) {
+            if (!streamAsBinary) {
               const remaining = decoder.decode();
               if (remaining.length > 0) {
                 const chunkEvent = { type: 'chunk', data: remaining };

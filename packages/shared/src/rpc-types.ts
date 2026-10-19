@@ -100,7 +100,8 @@ export interface SandboxFilesAPI {
   ): Promise<ReadFileResult>;
   readFileStream(
     path: string,
-    sessionId: string
+    sessionId: string,
+    options?: { encoding?: 'base64' }
   ): Promise<ReadableStream<Uint8Array>>;
   writeFile(
     path: string,

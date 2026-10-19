@@ -84,24 +84,67 @@ async function* parseSSE(
 export async function* streamFile(
   stream: ReadableStream<Uint8Array>
 ): AsyncGenerator<FileChunk, FileMetadata> {
-  let metadata: FileMetadata | null = null;
+  const { chunks } = await openFileStream(stream);
+  return yield* chunks;
+}
 
-  for await (const event of parseSSE(stream)) {
+/**
+ * Read the metadata event at the head of a file stream and return it with
+ * the decoded chunks that follow. Callers that need the file size before
+ * consuming the body, such as sizing a FixedLengthStream, use this instead of
+ * streamFile(). Call cancel() to release the stream without reading the rest.
+ */
+export async function openFileStream(
+  stream: ReadableStream<Uint8Array>
+): Promise<{
+  metadata: FileMetadata;
+  chunks: AsyncGenerator<FileChunk, FileMetadata>;
+  cancel: () => Promise<void>;
+}> {
+  const events = parseSSE(stream);
+  const cancel = async () => {
+    await events.return(undefined);
+  };
+  try {
+    const first = await events.next();
+    if (first.done) {
+      throw new Error('Stream ended unexpectedly');
+    }
+    const metadata = readMetadataEvent(first.value);
+    return { metadata, chunks: decodeChunks(events, metadata), cancel };
+  } catch (error) {
+    // Cancel the underlying stream when the head of it is unusable.
+    await cancel();
+    throw error;
+  }
+}
+
+function readMetadataEvent(event: FileStreamEvent): FileMetadata {
+  switch (event.type) {
+    case 'metadata':
+      return toFileMetadata(event);
+    case 'chunk':
+      throw new Error('Received chunk before metadata');
+    case 'complete':
+      throw new Error('Stream completed without metadata');
+    case 'error':
+      throw new Error(`File streaming error: ${event.error}`);
+  }
+}
+
+async function* decodeChunks(
+  events: AsyncGenerator<FileStreamEvent>,
+  initialMetadata: FileMetadata
+): AsyncGenerator<FileChunk, FileMetadata> {
+  let metadata = initialMetadata;
+
+  for await (const event of events) {
     switch (event.type) {
       case 'metadata':
-        metadata = {
-          mimeType: event.mimeType,
-          size: event.size,
-          isBinary: event.isBinary,
-          encoding: event.encoding
-        };
+        metadata = toFileMetadata(event);
         break;
 
       case 'chunk':
-        if (!metadata) {
-          throw new Error('Received chunk before metadata');
-        }
-
         if (metadata.isBinary && metadata.encoding === 'base64') {
           // Decode base64 to Uint8Array for binary files
           const binaryString = atob(event.data);
@@ -117,9 +160,6 @@ export async function* streamFile(
         break;
 
       case 'complete':
-        if (!metadata) {
-          throw new Error('Stream completed without metadata');
-        }
         return metadata;
 
       case 'error':
@@ -128,6 +168,17 @@ export async function* streamFile(
   }
 
   throw new Error('Stream ended unexpectedly');
+}
+
+function toFileMetadata(
+  event: Extract<FileStreamEvent, { type: 'metadata' }>
+): FileMetadata {
+  return {
+    mimeType: event.mimeType,
+    size: event.size,
+    isBinary: event.isBinary,
+    encoding: event.encoding
+  };
 }
 
 /**

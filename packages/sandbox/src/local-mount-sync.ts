@@ -3,6 +3,7 @@ import type { FileWatchSSEEvent, Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { SandboxClient } from './clients';
 import type { ContainerControlClient } from './container-control';
+import { openFileStream } from './file-stream';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
 
@@ -10,6 +11,15 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
 const MAX_BACKOFF_MS = 30_000;
 const SYNC_CONCURRENCY = 5;
+
+// A base64 writeFile travels in one control frame, which the container caps
+// at 16 MiB. Larger objects stream into the container on the rpc transport,
+// the only transport with a streaming write.
+const STREAM_TO_CONTAINER_THRESHOLD_BYTES = 4 * 1024 * 1024;
+
+// Writing a file into the mount emits a burst of modify events. Upload once
+// the burst settles instead of shipping each partial state.
+export const UPLOAD_DEBOUNCE_MS = 1500;
 
 /** Watch rejections that a retry with the same request cannot fix. */
 const PERMANENT_WATCH_ERRORS: ReadonlySet<unknown> = new Set([
@@ -53,7 +63,12 @@ export class LocalMountSyncManager {
   private readonly echoSuppressTtlMs: number;
 
   private snapshot: Map<string, R2ObjectSnapshot> = new Map();
-  private echoSuppressSet: Set<string> = new Set();
+  private echoSuppressTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
+  private uploadTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  // Container -> R2 operations run one at a time, in event order, so a late
+  // upload cannot land after a delete or a newer upload of the same file.
+  private containerToR2Queue: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchAbortController: AbortController | null = null;
@@ -126,8 +141,19 @@ export class LocalMountSyncManager {
       this.watchAbortController = null;
     }
 
+    // Pending uploads are dropped: without the watch stream nothing tells us
+    // whether those files finished being written.
+    for (const timer of this.uploadTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.uploadTimers.clear();
+
+    for (const timer of this.echoSuppressTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.echoSuppressTimers.clear();
+
     this.snapshot.clear();
-    this.echoSuppressSet.clear();
 
     this.logger.info('Local mount sync stopped', {
       mountPath: this.mountPath
@@ -210,6 +236,9 @@ export class LocalMountSyncManager {
             await this.ensureParentDir(containerPath);
             this.suppressEcho(containerPath);
             await this.transferR2ObjectToContainer(key, containerPath);
+            // Restart the window so the watch events from a long streamed
+            // write are suppressed too.
+            this.suppressEcho(containerPath);
             this.logger.debug('R2 -> Container: synced object', {
               key,
               action
@@ -272,6 +301,24 @@ export class LocalMountSyncManager {
   ): Promise<void> {
     const obj = await this.bucket.get(key);
     if (!obj) return;
+
+    if (
+      obj.size > STREAM_TO_CONTAINER_THRESHOLD_BYTES &&
+      this.client.getTransportMode() === 'rpc'
+    ) {
+      try {
+        await this.client.files.writeFileStream(
+          containerPath,
+          obj.body,
+          this.sessionId
+        );
+      } catch (error) {
+        // A call that fails before reading the body leaves the R2 read open.
+        await obj.body.cancel().catch(() => {});
+        throw error;
+      }
+      return;
+    }
 
     const arrayBuffer = await obj.arrayBuffer();
     const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
@@ -370,60 +417,109 @@ export class LocalMountSyncManager {
       const containerPath = event.path;
 
       // Skip echo from our own R2 -> Container writes
-      if (this.echoSuppressSet.has(containerPath)) continue;
+      if (this.echoSuppressTimers.has(containerPath)) continue;
 
       const r2Key = this.containerPathToR2Key(containerPath);
       if (!r2Key) continue;
 
-      try {
-        switch (event.eventType) {
-          case 'create':
-          case 'modify':
-          case 'move_to': {
-            await this.uploadFileToR2(containerPath, r2Key);
-            this.logger.debug('Container -> R2: synced file', {
-              path: containerPath,
-              key: r2Key,
-              action: event.eventType
-            });
-            break;
-          }
+      switch (event.eventType) {
+        case 'create':
+        case 'modify':
+        case 'move_to':
+          this.scheduleUpload(containerPath, r2Key);
+          break;
 
-          case 'delete':
-          case 'move_from': {
+        case 'delete':
+        case 'move_from':
+          // A queued upload would resurrect the object after the delete.
+          this.cancelScheduledUpload(containerPath);
+          this.enqueueContainerToR2(containerPath, async () => {
             await this.bucket.delete(r2Key);
             this.snapshot.delete(r2Key);
             this.logger.debug('Container -> R2: deleted object', {
               path: containerPath,
               key: r2Key
             });
-            break;
-          }
-        }
+          });
+          break;
+      }
+    }
+  }
+
+  /**
+   * Upload a changed file once its burst of watch events settles. Each new
+   * event for the path restarts the wait.
+   */
+  private scheduleUpload(containerPath: string, r2Key: string): void {
+    this.cancelScheduledUpload(containerPath);
+    const timer = setTimeout(() => {
+      this.uploadTimers.delete(containerPath);
+      this.enqueueContainerToR2(containerPath, async () => {
+        await this.uploadFileToR2(containerPath, r2Key);
+        this.logger.debug('Container -> R2: synced file', {
+          path: containerPath,
+          key: r2Key
+        });
+      });
+    }, UPLOAD_DEBOUNCE_MS);
+    this.uploadTimers.set(containerPath, timer);
+  }
+
+  private cancelScheduledUpload(containerPath: string): void {
+    const timer = this.uploadTimers.get(containerPath);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.uploadTimers.delete(containerPath);
+    }
+  }
+
+  private enqueueContainerToR2(
+    containerPath: string,
+    operation: () => Promise<void>
+  ): void {
+    this.containerToR2Queue = this.containerToR2Queue.then(async () => {
+      if (!this.running) return;
+      try {
+        await operation();
       } catch (error) {
         this.logger.error(
           `Container -> R2 sync failed for ${containerPath}`,
           error instanceof Error ? error : new Error(String(error))
         );
       }
-    }
+    });
   }
 
   /**
-   * Read a container file and upload it to R2, then update the local
-   * snapshot so the next poll cycle doesn't echo the write back.
+   * Stream a container file into R2, then update the local snapshot so the
+   * next poll cycle doesn't echo the write back.
    */
   private async uploadFileToR2(
     containerPath: string,
     r2Key: string
   ): Promise<void> {
-    const result = await this.client.files.readFile(
+    // Force base64 chunks: the container classifies text by file extension,
+    // and a text stream would not preserve invalid UTF-8 bytes.
+    const stream = await this.client.files.readFileStream(
       containerPath,
       this.sessionId,
       { encoding: 'base64' }
     );
-    const bytes = base64ToUint8Array(result.content);
-    await this.bucket.put(r2Key, bytes);
+    const file = await openFileStream(stream);
+
+    if (file.metadata.isBinary && file.metadata.encoding === 'base64') {
+      await this.putFileStream(r2Key, file);
+    } else {
+      // Older containers ignore the encoding option and stream text files as
+      // UTF-8 strings, which cannot carry arbitrary bytes. Read those whole.
+      await file.cancel();
+      const result = await this.client.files.readFile(
+        containerPath,
+        this.sessionId,
+        { encoding: 'base64' }
+      );
+      await this.bucket.put(r2Key, base64ToUint8Array(result.content));
+    }
 
     const head = await this.bucket.head(r2Key);
     if (head) {
@@ -431,11 +527,45 @@ export class LocalMountSyncManager {
     }
   }
 
+  private async putFileStream(
+    r2Key: string,
+    file: Awaited<ReturnType<typeof openFileStream>>
+  ): Promise<void> {
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const next = await file.chunks.next();
+        if (next.done) {
+          controller.close();
+        } else if (typeof next.value === 'string') {
+          controller.error(new Error('Expected binary file chunks'));
+        } else {
+          controller.enqueue(next.value);
+        }
+      },
+      cancel: () => file.cancel()
+    });
+
+    // R2 needs a known length to accept a stream.
+    const sized = new FixedLengthStream(file.metadata.size);
+    const pipeAbort = new AbortController();
+    body.pipeTo(sized.writable, { signal: pipeAbort.signal }).catch(() => {});
+    try {
+      await this.bucket.put(r2Key, sized.readable);
+    } catch (error) {
+      // put() can reject without reading its body; stop reading the file.
+      pipeAbort.abort(error);
+      throw error;
+    }
+  }
+
   private suppressEcho(containerPath: string): void {
-    this.echoSuppressSet.add(containerPath);
-    setTimeout(() => {
-      this.echoSuppressSet.delete(containerPath);
-    }, this.echoSuppressTtlMs);
+    clearTimeout(this.echoSuppressTimers.get(containerPath));
+    this.echoSuppressTimers.set(
+      containerPath,
+      setTimeout(() => {
+        this.echoSuppressTimers.delete(containerPath);
+      }, this.echoSuppressTtlMs)
+    );
   }
 
   private r2KeyToContainerPath(key: string): string {

@@ -146,14 +146,17 @@ export class FileClient extends BaseHttpClient implements SandboxFilesAPI {
    * Returns a ReadableStream of SSE events containing metadata, chunks, and completion
    * @param path - File path to stream
    * @param sessionId - The session ID for this operation
+   * @param options - Optional stream encoding; base64 preserves arbitrary bytes
    */
   async readFileStream(
     path: string,
-    sessionId: string
+    sessionId: string,
+    options?: { encoding?: 'base64' }
   ): Promise<ReadableStream<Uint8Array>> {
     const data = {
       path,
-      sessionId
+      sessionId,
+      encoding: options?.encoding
     };
 
     // Use doStreamFetch which handles both WebSocket and HTTP streaming
