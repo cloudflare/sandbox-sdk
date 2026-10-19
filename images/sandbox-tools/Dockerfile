@@ -1,4 +1,4 @@
-FROM alpine:3.23 AS toolchain
+FROM alpine:3.24 AS toolchain
 
 # Steps that download take an optional extra_ca secret for networks that inspect TLS.
 RUN --mount=type=secret,id=extra_ca \
@@ -29,7 +29,7 @@ CMD ["cargo", "test", "--locked", "--package", "sandbox-tools"]
 FROM toolchain AS build
 RUN cargo rustc --release --locked --package sandbox-tools --bin sandbox-shim -- -C target-feature=+crt-static
 
-FROM alpine:3.23 AS contract
+FROM alpine:3.24 AS contract
 RUN --mount=type=secret,id=extra_ca \
     if [ -s /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
     apk add --no-cache nodejs npm
