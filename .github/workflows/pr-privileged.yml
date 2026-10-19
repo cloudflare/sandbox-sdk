@@ -1,7 +1,11 @@
 name: PR Privileged
 
 on:
+  # GitHub runs pull_request_target from the default branch whatever the PR's base, so without
+  # this filter it would test 0.x PRs against this branch's checks. The v0 and v0-preview branches
+  # run their own privileged workflow on pull_request instead.
   pull_request_target:
+    branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions: {}
