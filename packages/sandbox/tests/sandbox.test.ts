@@ -1789,7 +1789,10 @@ describe('Sandbox durable object behavior', () => {
       mockCtx.container.getTcpPort = vi
         .fn()
         .mockReturnValue({ fetch: vi.fn().mockRejectedValue(portError) });
-      const errorSpy = vi.spyOn((sandbox as any).logger, 'error');
+      const { logger } = sandbox as unknown as {
+        logger: Pick<SharedRoot.Logger, 'error'>;
+      };
+      const errorSpy = vi.spyOn(logger, 'error');
 
       const response = await sandbox.fetch(createPreviewProxyRequest());
 
