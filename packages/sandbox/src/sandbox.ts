@@ -292,6 +292,46 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
   ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
 ).outboundHandlers = SDK_OUTBOUND_HANDLERS;
 
+type RestoredMountRoutes = {
+  r2Buckets: R2EgressParams['buckets'];
+  credentialProxyMounts: S3CredentialProxyParams['mounts'];
+};
+
+function noRestoredMountRoutes(): RestoredMountRoutes {
+  return { r2Buckets: {}, credentialProxyMounts: {} };
+}
+
+/**
+ * Read the bucket mount routes that the base Container restored from storage
+ * in its constructor. `outboundByHostOverrides` is private in its types.
+ */
+function readRestoredMountRoutes(container: unknown): RestoredMountRoutes {
+  const overrides =
+    (
+      container as {
+        outboundByHostOverrides?: Record<
+          string,
+          { method: string; params?: unknown }
+        >;
+      }
+    ).outboundByHostOverrides ?? {};
+  const r2 = overrides['r2.internal'];
+  const credentialProxy = overrides[S3_CREDENTIAL_PROXY_HOST];
+  return {
+    r2Buckets:
+      r2?.method === 'r2EgressMount'
+        ? { ...(r2.params as R2EgressParams | undefined)?.buckets }
+        : {},
+    credentialProxyMounts:
+      credentialProxy?.method === 's3CredentialProxyMount'
+        ? {
+            ...(credentialProxy.params as S3CredentialProxyParams | undefined)
+              ?.mounts
+          }
+        : {}
+  };
+}
+
 /**
  * SDK-level ContainerProxy that directly dispatches SDK-internal mount hosts
  * (r2.internal, s3-credential-proxy.internal) without relying on
@@ -1055,6 +1095,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  // Bucket mount routes restored from a previous instance of this Durable
+  // Object. activeMounts starts empty after a restart, but s3fs mounts in a
+  // container that kept running still send requests, so every route update
+  // keeps these routes until that container stops.
+  private restoredMountRoutes: RestoredMountRoutes = noRestoredMountRoutes();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
@@ -1288,10 +1333,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // also make the base class apply and persist outbound interception, which
     // needs the ContainerProxy export that bucket mounts already require.
     if ((ctx as EgressContainerState).exports?.ContainerProxy) {
-      (new.target as unknown as OutboundHandlerRegistry).outboundHandlers =
-        SDK_OUTBOUND_HANDLERS;
+      const registry = new.target as unknown as OutboundHandlerRegistry;
+      registry.outboundHandlers = {
+        ...registry.outboundHandlers,
+        ...SDK_OUTBOUND_HANDLERS
+      };
     }
     super(ctx, env);
+    this.restoredMountRoutes = readRestoredMountRoutes(this);
 
     const envObj = env as Record<string, unknown>;
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
@@ -2971,6 +3020,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     await this.currentRuntime.markStarted();
 
+    // A new container has none of the previous container's s3fs mounts.
+    await this.releaseRestoredMountRoutes();
+
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
       this.logger.error(
@@ -3150,6 +3202,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         params
       )
     );
+
+    await this.releaseRestoredMountRoutes();
 
     // Stop local sync managers before clearing the map.
     let hadR2EgressMount = false;
@@ -7810,9 +7864,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  /**
+   * Drop the routes restored for a previous container's mounts, keeping the
+   * routes for mounts made by this instance.
+   */
+  private async releaseRestoredMountRoutes(): Promise<void> {
+    const { r2Buckets, credentialProxyMounts } = this.restoredMountRoutes;
+    this.restoredMountRoutes = noRestoredMountRoutes();
+    if (Object.keys(r2Buckets).length > 0) {
+      await this.configureR2EgressOutbound(this.getR2EgressParams()).catch(
+        () => {}
+      );
+    }
+    const credentialProxyMountIds = Object.keys(credentialProxyMounts);
+    if (credentialProxyMountIds.length > 0) {
+      for (const mountId of credentialProxyMountIds) {
+        evictSigV4ClientCacheEntry(mountId);
+        evictDirectoryMarkerCacheForMount(mountId);
+      }
+      await this.configureS3CredentialProxyOutbound(
+        this.getS3CredentialProxyParams()
+      ).catch(() => {});
+    }
+  }
+
   private async configureR2EgressOutbound(
-    params: R2EgressParams
+    activeParams: R2EgressParams
   ): Promise<void> {
+    const params: R2EgressParams = {
+      buckets: {
+        ...this.restoredMountRoutes.r2Buckets,
+        ...activeParams.buckets
+      }
+    };
     const ctx = this.ctx as EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
       throw new InvalidMountConfigError(
@@ -7868,8 +7952,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private async configureS3CredentialProxyOutbound(
-    params: S3CredentialProxyParams
+    activeParams: S3CredentialProxyParams
   ): Promise<void> {
+    const params: S3CredentialProxyParams = {
+      mounts: {
+        ...this.restoredMountRoutes.credentialProxyMounts,
+        ...activeParams.mounts
+      }
+    };
     const ctx = this.ctx as EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
       throw new InvalidMountConfigError(

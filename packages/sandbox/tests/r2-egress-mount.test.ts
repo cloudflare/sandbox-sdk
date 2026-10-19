@@ -64,6 +64,7 @@ vi.mock('@cloudflare/containers', () => {
     // The real base constructor validates persisted outbound overrides
     // against this registry entry before the subclass constructor body runs.
     outboundHandlersAtConstruction: Record<string, unknown> | undefined;
+    outboundByHostOverrides: Record<string, unknown>;
 
     constructor(ctx: unknown, env: unknown) {
       this.ctx = ctx;
@@ -71,6 +72,10 @@ vi.mock('@cloudflare/containers', () => {
       this.outboundHandlersAtConstruction = testOutboundHandlersRegistry.get(
         this.constructor.name
       );
+      // Stands in for the overrides the real base class restores from storage.
+      this.outboundByHostOverrides =
+        (ctx as { persistedOutboundOverrides?: Record<string, unknown> })
+          .persistedOutboundOverrides ?? {};
     }
 
     async fetch(): Promise<Response> {
@@ -139,6 +144,7 @@ vi.mock('@cloudflare/containers', () => {
 function createMockCtx(options?: {
   includeContainerProxy?: boolean;
   containerProxyResult?: unknown;
+  persistedOutboundOverrides?: Record<string, unknown>;
 }) {
   let latestProxyOptions: TestContainerProxyOptions | undefined;
   const containerProxyFetcher = {
@@ -197,6 +203,7 @@ function createMockCtx(options?: {
       interceptOutboundHttp: vi.fn().mockResolvedValue(undefined)
     },
     exports: options?.includeContainerProxy === false ? {} : { ContainerProxy },
+    persistedOutboundOverrides: options?.persistedOutboundOverrides,
     containerProxyFetcher
   };
 }
@@ -917,6 +924,81 @@ describe('Sandbox R2 egress mounts', () => {
     );
 
     expect(NoProxySandbox.outboundHandlers).toBeUndefined();
+  });
+
+  describe('after a Durable Object restart', () => {
+    const persistedOutboundOverrides = {
+      'r2.internal': {
+        method: 'r2EgressMount',
+        params: { buckets: { FIRST: { readOnly: false } } }
+      },
+      's3-credential-proxy.internal': {
+        method: 's3CredentialProxyMount',
+        params: { mounts: { 'mount-1': { bucket: 'remote' } } }
+      }
+    };
+
+    function createRestartedSandbox() {
+      const mockCtx = createMockCtx({ persistedOutboundOverrides });
+      const sandbox = new Sandbox(
+        mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        { FIRST: createMockR2Bucket(), SECOND: createMockR2Bucket() }
+      );
+      Object.assign(sandbox as object, {
+        execInternal: vi.fn(async (command: string) => {
+          if (command.startsWith('mkdir -p ')) return createExecResult(command);
+          if (command.includes('s3fs ')) return createExecResult(command);
+          if (command.startsWith('mountpoint')) {
+            return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+          }
+          throw new Error(`Unexpected command: ${command}`);
+        }),
+        createPasswordFile: vi.fn().mockResolvedValue(undefined),
+        deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+        createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+        deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+        generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-restart')
+      });
+      return { mockCtx, sandbox };
+    }
+
+    it('keeps routes for mounts made before the restart when another bucket is mounted', async () => {
+      const { mockCtx, sandbox } = createRestartedSandbox();
+
+      await sandbox.mountBucket('SECOND', '/mnt/second', {} as any);
+
+      expect(mockCtx.exports.ContainerProxy).toHaveBeenLastCalledWith({
+        props: expect.objectContaining({
+          outboundByHostOverrides: {
+            'r2.internal': {
+              method: 'r2EgressMount',
+              params: {
+                buckets: {
+                  FIRST: { readOnly: false },
+                  SECOND: { prefix: undefined, readOnly: false }
+                }
+              }
+            }
+          }
+        })
+      });
+    });
+
+    it('removes routes for mounts made before the restart when the container stops', async () => {
+      const { sandbox } = createRestartedSandbox();
+      const removeOutboundByHost = vi.spyOn(
+        sandbox as unknown as { removeOutboundByHost: (h: string) => unknown },
+        'removeOutboundByHost'
+      );
+
+      await (sandbox as unknown as { onStop: () => Promise<void> }).onStop();
+
+      expect(removeOutboundByHost.mock.calls.map(([host]) => host)).toEqual([
+        'r2.internal',
+        's3-credential-proxy.internal',
+        's3-credential-proxy.sandbox.test'
+      ]);
+    });
   });
 
   describe('handler prefix translation', () => {
