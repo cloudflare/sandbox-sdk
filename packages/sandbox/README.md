@@ -140,6 +140,13 @@ const recovered = await sandbox.getProcess(server.id);
 const running = await sandbox.listProcesses();
 ```
 
+Process and terminal handles hold a Workers RPC reference to the Sandbox. Declare them with `using` to release that reference when the handle goes out of scope; the process keeps running:
+
+```ts
+using build = await sandbox.exec(['npm', 'run', 'build']);
+const { exitCode } = await build.output({ encoding: 'utf8' });
+```
+
 `getProcess()` and `listProcesses()` are non-waking discovery calls: with no active runtime they return `null` and `[]` instead of starting a replacement. Handles, IDs, PIDs, statuses, retained logs, and cursors belong to the runtime that launched the process. After sleep, restart, or replacement, discovery cannot recover them and operations on an old handle fail with `STALE_PROCESS_HANDLE` rather than targeting a replacement runtime.
 
 Use `createTerminal()` for a persistent interactive PTY shell with input, resize, interrupt, terminate, and reconnect semantics. Terminals remain separate from supervised processes and are also runtime-local.

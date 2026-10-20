@@ -129,6 +129,15 @@ describe('SandboxProcessImpl', () => {
     expect(descriptor.capability.kill).toHaveBeenNthCalledWith(2, 15);
   });
 
+  it('treats disposal of an in-object capability as a no-op', async () => {
+    const descriptor = processDescriptor();
+    const process = createSandboxProcess(descriptor);
+
+    process[Symbol.dispose]();
+
+    await expect(process.status()).resolves.toEqual(running);
+  });
+
   it('opens logs without transporting AbortSignal', async () => {
     const descriptor = processDescriptor();
     const process = createSandboxProcess(descriptor);

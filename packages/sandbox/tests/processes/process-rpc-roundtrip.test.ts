@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { RPCTransportError } from '../../src';
 import { createSandboxProcess } from '../../src/processes';
 import { readProcessOutput } from '../../src/processes/process-output';
-import type { ProcessPullSubscriptionRPC } from '../../src/processes/rpc-types';
+import type {
+  ProcessPullSubscriptionRPC,
+  ProcessRPCDescriptor
+} from '../../src/processes/rpc-types';
 import type { ProcessCapabilityRPCTestDO } from '../fixtures/process-capability-rpc';
 
 declare global {
@@ -29,6 +32,37 @@ describe('process capability Workers RPC', () => {
       pid: 123,
       state: 'running'
     });
+  });
+
+  it('disposes only the caller stub when a process handle is disposed', async () => {
+    const stub = env.ProcessCapabilityTest.get(
+      env.ProcessCapabilityTest.idFromName('dispose')
+    );
+    // getSandbox() narrows the same boundary result through its own stub
+    // type; the generic Stub transform widens readonly status fields.
+    const remoteProcess = async () =>
+      createSandboxProcess(
+        (await stub.descriptor()) as unknown as ProcessRPCDescriptor
+      );
+
+    const process = await remoteProcess();
+    let logs: ReadableStream<ProcessLogEvent>;
+    {
+      using handle = process;
+      await expect(handle.status()).resolves.toMatchObject({ id: 'p1' });
+      logs = await handle.logs();
+    }
+
+    // A log stream opened through the handle outlives it
+    await expect(logs.getReader().read()).resolves.toEqual({
+      done: true,
+      value: undefined
+    });
+
+    // Wrap the RPC promise so expect() cannot pipeline calls through it.
+    await expect(Promise.resolve(process.status())).rejects.toThrow(/disposed/);
+    using recovered = await remoteProcess();
+    await expect(recovered.status()).resolves.toMatchObject({ id: 'p1' });
   });
 
   it('allows replay-only logs to close cleanly through the capability', async () => {

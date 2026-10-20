@@ -85,6 +85,8 @@ export interface Terminal {
     request: Request,
     options?: { cursor?: TerminalOutputCursor; cols?: number; rows?: number }
   ): Promise<Response>;
+  /** Releases this handle's RPC reference. The terminal keeps running. */
+  [Symbol.dispose](): void;
 }
 
 export interface SandboxTerminalsAPI {

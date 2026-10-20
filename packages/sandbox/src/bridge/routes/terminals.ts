@@ -179,11 +179,17 @@ export function registerTerminalRoutes(
       try {
         const terminal = await sandbox.getTerminal(terminalId);
         if (!terminal) return errorJson('Terminal not found', 'not_found', 404);
-        return await terminal.connect(c.req.raw, {
-          cursor: c.req.query('cursor'),
-          cols,
-          rows
-        });
+        try {
+          return await terminal.connect(c.req.raw, {
+            cursor: c.req.query('cursor'),
+            cols,
+            rows
+          });
+        } finally {
+          // The WebSocket outlives the handle; release the handle's stub now
+          // rather than holding it for the life of the connection.
+          terminal[Symbol.dispose]();
+        }
       } catch (error) {
         return terminalError(error);
       }
