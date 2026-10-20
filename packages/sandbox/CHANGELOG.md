@@ -1,5 +1,31 @@
 # @cloudflare/sandbox
 
+## 0.12.12
+
+### Patch Changes
+
+- [#1002](https://github.com/cloudflare/sandbox-sdk/pull/1002) [`8dc216c`](https://github.com/cloudflare/sandbox-sdk/commit/8dc216c5c16563d0e3f2044ad14c0657682f3fd9) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `mountBucket()` breaking an existing mount when a second call for the same mount path fails with "already in use". The existing mount now stays mounted and usable.
+
+- [#1013](https://github.com/cloudflare/sandbox-sdk/pull/1013) [`98b787b`](https://github.com/cloudflare/sandbox-sdk/commit/98b787b81b5526851af95e6be9ca98da13ae450d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Keep streaming `exec()` alive while a command is quiet, and enforce its `timeout`. Quiet commands were cut off after about four minutes on the HTTP transport and five on WebSocket. The timeout was ignored on those transports, and on every transport for commands that run in a session. Requires the matching container image.
+
+- [#1008](https://github.com/cloudflare/sandbox-sdk/pull/1008) [`b2a862c`](https://github.com/cloudflare/sandbox-sdk/commit/b2a862cffce187f56bcfae321756c0a9c91b712b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Keep R2 binding and credential-proxy bucket mounts working when the Sandbox Durable Object restarts while its container keeps running. The mounts used to stay listed but fail every read and write with `EIO` until `mountBucket()` was called again.
+
+- [#1003](https://github.com/cloudflare/sandbox-sdk/pull/1003) [`e8332cd`](https://github.com/cloudflare/sandbox-sdk/commit/e8332cd3c6b0a6f958062304f922d93678f6dfed) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `createOpencodeServer()` and `createOpencode()` waiting for the full three-minute startup timeout when `OPENCODE_SERVER_PASSWORD` is set. When the password is passed in `env`, the client returned by `createOpencode()` now authenticates with it.
+
+- [#1016](https://github.com/cloudflare/sandbox-sdk/pull/1016) [`d62f020`](https://github.com/cloudflare/sandbox-sdk/commit/d62f020d6b1cae787fc676c11b29b7718c40f575) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Create the s3fs password file for `mountBucket()` with mode 0600 from the start. The file used to be readable by other users in the container until a chmod a moment later, long enough for a non-root process to open it and read the bucket credentials. Upgrade the container image together with the SDK to close the gap; with an older image, mounts work as before.
+
+- [#996](https://github.com/cloudflare/sandbox-sdk/pull/996) [`da3d7b6`](https://github.com/cloudflare/sandbox-sdk/commit/da3d7b6c4edde53b071c42180bca22493e864c9a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Answer a preview request with `502` when the app's port in the container fails, for example because nothing listens on it or it closes the connection, and log the original error. Previously the error escaped the Sandbox, `proxyToSandbox()` answered `500 Proxy routing error`, and the log blamed a platform runtime update.
+
+- [#997](https://github.com/cloudflare/sandbox-sdk/pull/997) [`c79bf1d`](https://github.com/cloudflare/sandbox-sdk/commit/c79bf1de83e9be4d5c423b0b60fc7d48792418e7) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Forward WebSocket upgrades on preview URLs with `Host: localhost:<port>`, like every other preview request. Dev servers that check the `Host` header, such as Vite, no longer reject HMR connections. The public hostname is still in `X-Forwarded-Host`.
+
+- [#1000](https://github.com/cloudflare/sandbox-sdk/pull/1000) [`c676077`](https://github.com/cloudflare/sandbox-sdk/commit/c6760770b291531ae9a782e6ddfc2aa32ad8674c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Keep preview URLs and tunnels working on the RPC transport after the control connection reconnects. The connection closes after 1 second without calls, and the next call used to rerun the sandbox's start handling even though the container was still running. Preview URLs then returned `410 STALE_PREVIEW_URL`, `getExposedPorts()` returned an empty list, quick tunnels disappeared from `tunnels.list()`, and `tunnels.get()` could fail with "Tunnel recovery attempts were exhausted".
+
+- [#1010](https://github.com/cloudflare/sandbox-sdk/pull/1010) [`7866d45`](https://github.com/cloudflare/sandbox-sdk/commit/7866d45fb7c1b83e45d1fac4f5c084d712603bb0) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Stop the first call on the RPC transport from failing when Cloudflare can't provide a container right away. The call now keeps waiting for the container within its retry window.
+
+- [#995](https://github.com/cloudflare/sandbox-sdk/pull/995) [`becade1`](https://github.com/cloudflare/sandbox-sdk/commit/becade1ff2b472d50340c64b12cf1c9208d945f7) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Stop the container server from crashing with `ENOENT: no such file or directory, watch '…/<id>.log.stderr'` while commands run. The crash killed every process in the container. Update the container image to pick up this fix.
+
+- [#1007](https://github.com/cloudflare/sandbox-sdk/pull/1007) [`fa57149`](https://github.com/cloudflare/sandbox-sdk/commit/fa571496cd1276d41c8d23672c3e6da541c4d1d1) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - `tunnels.get()` on the RPC transport now reports the real tunnel error, such as `cloudflared` failing to start or missing from the image, instead of "Tunnel recovery attempts were exhausted". It also no longer leaves a port stuck after giving up: a `cloudflared` left running from an earlier attempt is stopped and replaced. Replacing it needs the matching container image.
+
 ## 0.12.11
 
 ### Patch Changes
