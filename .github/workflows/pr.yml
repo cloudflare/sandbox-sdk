@@ -70,6 +70,29 @@ jobs:
             echo "needs-quality=false" >> $GITHUB_OUTPUT
           fi
 
+  # --- Configuration guard (unconditional and independent of reusable workflows) ---
+  config-guard:
+    name: ci/config
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Validate CI configuration
+        run: npm run test:release-tools
+
   # --- Build (JS only, no Docker — Docker moves to pr-privileged.yml) ---
   build:
     needs: detect-changes
@@ -95,15 +118,20 @@ jobs:
   basic-gate:
     name: ci/basic
     if: always()
-    needs: [build, quality]
+    needs: [config-guard, build, quality]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Check job results
         run: |
+          echo "config: ${{ needs.config-guard.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "quality: ${{ needs.quality.result }}"
 
+          if [[ "${{ needs.config-guard.result }}" != "success" ]]; then
+            echo "::error::CI configuration validation did not succeed"
+            exit 1
+          fi
           if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build.result }}" == "cancelled" ]]; then
             echo "::error::Build failed or was cancelled"
             exit 1
