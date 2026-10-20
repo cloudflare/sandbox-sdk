@@ -207,6 +207,30 @@ describe('FileHandler', () => {
       );
     });
 
+    it('passes ownerOnly through to the file service', async () => {
+      (mockFileService.writeFile as any).mockResolvedValue({ success: true });
+
+      const request = new Request('http://localhost:3000/api/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: '/tmp/.passwd-s3fs-test',
+          content: 'bucket:key:secret',
+          ownerOnly: true
+        })
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.writeFile).toHaveBeenCalledWith(
+        '/tmp/.passwd-s3fs-test',
+        'bucket:key:secret',
+        { ownerOnly: true },
+        undefined
+      );
+    });
+
     it('should pass undefined sessionId when not provided', async () => {
       const writeFileData = {
         path: '/tmp/output.txt',

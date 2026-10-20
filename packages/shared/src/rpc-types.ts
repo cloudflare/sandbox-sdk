@@ -107,7 +107,7 @@ export interface SandboxFilesAPI {
     path: string,
     content: string,
     sessionId: string,
-    options?: { encoding?: string; permissions?: string }
+    options?: { encoding?: string; ownerOnly?: boolean }
   ): Promise<WriteFileResult>;
   writeFileStream(
     path: string,
