@@ -3,7 +3,7 @@ set -euo pipefail
 shopt -s nullglob
 
 ts_tests=(.github/*.test.ts)
-shell_tests=(.github/*.test.sh)
+shell_tests=(.github/*.test.sh .github/scripts/*.test.sh)
 
 if [[ ${#ts_tests[@]} -gt 0 ]]; then
   node --import tsx --test "${ts_tests[@]}"

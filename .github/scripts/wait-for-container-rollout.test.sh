@@ -82,6 +82,44 @@ if ! grep -qx -- '--yes wrangler@latest containers list --json' "$invocations"; 
 fi
 echo 'PASS npx-fallback'
 
+# A failed wrangler call is logged and polled again. Calls 1 and 3 are the
+# first `containers list` and the first `containers info`.
+mkdir -p "$tmp/flaky-bin"
+cat >"$tmp/flaky-bin/wrangler" <<'SH'
+#!/usr/bin/env bash
+count=$(($(cat "$WRANGLER_CALLS" 2>/dev/null || echo 0) + 1))
+echo "$count" >"$WRANGLER_CALLS"
+if [[ $count == 1 || $count == 3 ]]; then
+  echo 'Unknown internal error' >&2
+  exit 1
+fi
+exec "$FAKE_NPX" --yes wrangler "$@"
+SH
+chmod +x "$tmp/flaky-bin/wrangler"
+
+if ! flaky_output=$(PATH="$tmp/flaky-bin:/usr/bin:/bin" \
+  FAKE_NPX="$tmp/bin/npx" \
+  WRANGLER_CALLS="$tmp/wrangler-calls" \
+  WRANGLER_INVOCATIONS="$tmp/flaky-invocations" \
+  CLOUDFLARE_ACCOUNT_ID=account \
+  CLOUDFLARE_API_TOKEN=token \
+  ROLLOUT_TIMEOUT_SECONDS=5 \
+  ROLLOUT_POLL_SECONDS=0 \
+  "$script" worker ci-expected 2>&1); then
+  printf 'FAIL flaky-wrangler exited non-zero\n%s\n' "$flaky_output" >&2
+  exit 1
+fi
+for wanted in \
+  '::warning::wrangler containers list --json failed; polling again: Unknown internal error' \
+  '::warning::wrangler containers info default failed; polling again: Unknown internal error' \
+  'All container applications are ready'; do
+  if [[ $flaky_output != *"$wanted"* ]]; then
+    printf 'FAIL flaky-wrangler missing %q\n%s\n' "$wanted" "$flaky_output" >&2
+    exit 1
+  fi
+done
+echo 'PASS flaky-wrangler'
+
 cat >"$tmp/ready.json" <<'JSON'
 {"version":2,"configuration":{"image":"registry.cloudflare.com/account/sandbox:ci-expected"},"health":{"errors":[],"instances":{"starting":0,"scheduling":0,"failed":0}}}
 JSON

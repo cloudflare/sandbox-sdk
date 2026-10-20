@@ -91,9 +91,27 @@ else
   exit 1
 fi
 
+# Prints the command's stdout. A failed call is logged with its output and
+# returns 1, so the caller can poll again instead of exiting under set -e.
+wrangler_query() {
+  local stderr_file output
+  stderr_file=$(mktemp)
+  if output=$("${wrangler_command[@]}" "$@" 2>"$stderr_file"); then
+    rm -f "$stderr_file"
+    printf '%s\n' "$output"
+    return 0
+  fi
+  echo "::warning::wrangler $* failed; polling again: $(cat "$stderr_file") $output" >&2
+  rm -f "$stderr_file"
+  return 1
+}
+
 echo "Waiting for container applications to serve image tag $image_tag"
 while ((SECONDS < deadline)); do
-  apps=$("${wrangler_command[@]}" containers list --json)
+  if ! apps=$(wrangler_query containers list --json); then
+    sleep "$poll_seconds"
+    continue
+  fi
   all_ready=true
 
   for app_name in "${app_names[@]}"; do
@@ -105,9 +123,12 @@ while ((SECONDS < deadline)); do
     fi
 
     app_id=$(jq -r '.id' <<<"$app")
-    app=$("${wrangler_command[@]}" containers info "$app_id")
     expected=$(expected_image "$worker" "$image_tag" "$app_name")
-    instances=$("${wrangler_command[@]}" containers instances "$app_id" --json)
+    if ! app=$(wrangler_query containers info "$app_id") ||
+      ! instances=$(wrangler_query containers instances "$app_id" --json); then
+      all_ready=false
+      continue
+    fi
     reasons=$(readiness_reasons "$app" "$instances" "$expected")
 
     if [[ -z $reasons ]]; then
@@ -136,5 +157,5 @@ while ((SECONDS < deadline)); do
   sleep "$poll_seconds"
 done
 
-echo '::error::Container rollout did not become ready before timeout'
+echo '::error::Container rollout did not become ready before timeout; see the last waiting reasons and warnings above'
 exit 1
