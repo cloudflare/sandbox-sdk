@@ -4,13 +4,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InternalCommandRunner } from '../../src/services/internal-command-runner';
 
-// Waits in real time, which fake timers do not advance.
+// These wait in real time, which fake timers do not advance.
 async function waitForFile(path: string): Promise<void> {
   for (let attempt = 0; attempt < 500; attempt++) {
     if (await Bun.file(path).exists()) return;
     Bun.sleepSync(10);
   }
   throw new Error(`${path} did not appear within 5 seconds`);
+}
+
+async function letRealTimePass(ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += 10) {
+    await new Promise((resolve) => setImmediate(resolve));
+    Bun.sleepSync(10);
+  }
 }
 
 describe('InternalCommandRunner', () => {
@@ -29,9 +36,15 @@ describe('InternalCommandRunner', () => {
       });
 
       // The runner's clock stands still while the login shell starts, so the
-      // timeout fires only after the command has installed its trap. Then
-      // step the clock through the timeout and the SIGTERM grace period.
+      // timeout fires only after the command has installed its trap.
       await waitForFile(trapped);
+      jest.advanceTimersByTime(1_000);
+
+      // The command ignores SIGTERM, so it is still running until the grace
+      // period ends on the runner's clock.
+      await letRealTimePass(200);
+      expect(settled).toBe(false);
+
       while (!settled) {
         jest.advanceTimersByTime(1_000);
         await new Promise((resolve) => setImmediate(resolve));
