@@ -3,6 +3,7 @@ import {
   isWSError,
   isWSResponse,
   isWSStreamChunk,
+  WS_KEEPALIVE_EVENT,
   type WSMethod,
   type WSRequest,
   type WSResponse,
@@ -754,6 +755,11 @@ export class WebSocketTransport extends BaseTransport {
     // NOW reset the idle timeout - controller is guaranteed to exist
     if (pending.isStreaming) {
       this.resetStreamIdleTimeout(chunk.id, pending);
+    }
+
+    // A keepalive from a quiet stream only resets the idle timer
+    if (chunk.event === WS_KEEPALIVE_EVENT) {
+      return;
     }
 
     // Buffer chunks if controller not set yet (race between onFirstChunk and enqueue)

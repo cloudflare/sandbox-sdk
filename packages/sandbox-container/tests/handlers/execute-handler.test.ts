@@ -299,6 +299,57 @@ describe('ExecuteHandler', () => {
       );
     });
 
+    it('keeps a quiet stream alive and enforces the requested timeout', async () => {
+      const statusListeners = new Set<(status: string) => void>();
+      mocked(mockProcessService.startProcess).mockResolvedValue({
+        success: true as const,
+        data: {
+          id: 'quiet-proc',
+          command: 'sleep 600',
+          status: 'running' as const,
+          startTime: new Date(),
+          pid: 4242,
+          stdout: '',
+          stderr: '',
+          outputListeners: new Set<
+            (stream: 'stdout' | 'stderr', data: string) => void
+          >(),
+          statusListeners
+        }
+      });
+      const handler = new ExecuteHandler(mockProcessService, mockLogger, 5);
+
+      const response = await handler.handle(
+        new Request('http://localhost:3000/api/execute/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: 'sleep 600', timeoutMs: 600_000 })
+        }),
+        mockContext
+      );
+      expect(mockProcessService.startProcess).toHaveBeenCalledWith(
+        'sleep 600',
+        expect.objectContaining({ timeoutMs: 600_000 })
+      );
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      const read = async () => decoder.decode((await reader.read()).value);
+      expect(await read()).toContain('"type":"start"');
+      expect(await read()).toBe(': keepalive\n\n');
+
+      for (const listener of statusListeners) listener('completed');
+      const rest: string[] = [];
+      for (let r = await reader.read(); !r.done; r = await reader.read()) {
+        rest.push(decoder.decode(r.value));
+      }
+      expect(rest.at(-1)).toContain('"type":"complete"');
+      expect(new Set(rest.slice(0, -1))).toEqual(
+        new Set(rest.length > 1 ? [': keepalive\n\n'] : [])
+      );
+      expect(statusListeners.size).toBe(0);
+    });
+
     /**
      * Test for GitHub issue #13442: Stream controller race condition
      *

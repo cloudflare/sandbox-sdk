@@ -1,4 +1,12 @@
-import type { Logger, WSError, WSRequest, WSResponse } from '@repo/shared';
+import type {
+  Logger,
+  WSError,
+  WSRequest,
+  WSResponse,
+  WSServerMessage,
+  WSStreamChunk
+} from '@repo/shared';
+import type { ServerWebSocket } from 'bun';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Router } from '../../src/core/router';
 import {
@@ -6,6 +14,7 @@ import {
   WebSocketAdapter,
   type WSData
 } from '../../src/handlers/ws-adapter';
+import { mocked } from '../test-utils';
 
 // Mock ServerWebSocket
 class MockServerWebSocket {
@@ -265,6 +274,50 @@ describe('WebSocketAdapter', () => {
       const finalResponse = messages.find((m) => m.type === 'response');
       expect(finalResponse).toBeDefined();
       expect(finalResponse.done).toBe(true);
+    });
+
+    it('should forward SSE keepalive comments as empty stream chunks', async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'));
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
+          controller.close();
+        }
+      });
+      mocked(mockRouter.route).mockResolvedValue(
+        new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
+
+      await adapter.onMessage(
+        mockWs as unknown as ServerWebSocket<WSData>,
+        JSON.stringify({
+          type: 'request',
+          id: 'req-quiet',
+          method: 'POST',
+          path: '/api/execute/stream',
+          body: { command: 'sleep 600' }
+        } satisfies WSRequest)
+      );
+      // Streaming runs in the background; wait for the final response
+      for (let i = 0; i < 100; i++) {
+        if (mockWs.getLastMessage<WSResponse>().type === 'response') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const chunks = mockWs
+        .getSentMessages<WSServerMessage>()
+        .filter((m): m is WSStreamChunk => m.type === 'stream')
+        .map(({ event, data }) => ({ event, data }));
+      expect(chunks).toEqual([
+        { data: '{"type":"start"}' },
+        { event: 'keepalive', data: '' },
+        { data: '{"type":"complete"}' }
+      ]);
     });
 
     it('should ignore cancel from another connection for an active stream', async () => {

@@ -104,6 +104,7 @@ export class ExecutionService {
         options.onEvent,
         {
           cwd: options.cwd,
+          timeoutMs: options.timeoutMs,
           env: options.env,
           origin: options.origin
         },

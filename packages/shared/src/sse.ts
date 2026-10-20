@@ -19,7 +19,8 @@ export interface SSEPartialEvent {
  * Parse SSE frames from a buffer.
  *
  * Returns parsed events, remaining unparsed text, and the current partial event
- * so callers can continue parsing on the next chunk.
+ * so callers can continue parsing on the next chunk. `comments` counts comment
+ * lines (`: keepalive`), which carry no event but show the stream is alive.
  */
 export function parseSSEFrames(
   buffer: string,
@@ -28,8 +29,10 @@ export function parseSSEFrames(
   events: SSEEventFrame[];
   remaining: string;
   currentEvent: SSEPartialEvent;
+  comments: number;
 } {
   const events: SSEEventFrame[] = [];
+  let comments = 0;
   let i = 0;
 
   while (i < buffer.length) {
@@ -46,6 +49,11 @@ export function parseSSEFrames(
         data: currentEvent.data.join('\n')
       });
       currentEvent = { data: [] };
+      continue;
+    }
+
+    if (line.startsWith(':')) {
+      comments++;
       continue;
     }
 
@@ -68,6 +76,7 @@ export function parseSSEFrames(
   return {
     events,
     remaining: buffer.substring(i),
-    currentEvent
+    currentEvent,
+    comments
   };
 }

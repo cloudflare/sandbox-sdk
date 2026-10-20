@@ -12,6 +12,7 @@ import {
   isWSRequest,
   parseSSEFrames,
   type SSEPartialEvent,
+  WS_KEEPALIVE_EVENT,
   type WSError,
   type WSRequest,
   type WSResponse,
@@ -348,6 +349,20 @@ export class WebSocketAdapter {
           };
           if (!this.send(ws, chunk)) {
             return; // Connection dead, stop processing
+          }
+        }
+
+        // An SSE comment is a keepalive. Forward it as a keepalive chunk so
+        // the client's stream idle timer sees a quiet but live stream.
+        if (result.events.length === 0 && result.comments > 0) {
+          const keepalive: WSStreamChunk = {
+            type: 'stream',
+            id: requestId,
+            event: WS_KEEPALIVE_EVENT,
+            data: ''
+          };
+          if (!this.send(ws, keepalive)) {
+            return;
           }
         }
       }

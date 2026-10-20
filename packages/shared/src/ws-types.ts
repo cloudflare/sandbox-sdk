@@ -70,12 +70,18 @@ export interface WSStreamChunk {
   /** Request ID this chunk belongs to */
   id: string;
 
-  /** Stream event type (matches SSE event types) */
+  /**
+   * Stream event type (matches SSE event types). `WS_KEEPALIVE_EVENT` marks
+   * a keepalive from a quiet stream, which carries no data.
+   */
   event?: string;
 
   /** Chunk data */
   data: string;
 }
+
+/** `WSStreamChunk.event` for a keepalive forwarded from an SSE comment */
+export const WS_KEEPALIVE_EVENT = 'keepalive';
 
 /**
  * WebSocket error response

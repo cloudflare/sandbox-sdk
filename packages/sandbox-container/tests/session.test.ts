@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Logger } from '@repo/shared';
+import type { ExecEvent, Logger } from '@repo/shared';
 import { Session } from '../src/session';
 
 function interceptWatchers(onCreate: (watcher: fs.FSWatcher) => void) {
@@ -527,6 +527,25 @@ describe('Session', () => {
       // Should have stdout events
       const stdoutEvents = events.filter((e) => e.type === 'stdout');
       expect(stdoutEvents.length).toBeGreaterThan(0);
+    });
+
+    it('kills a command that outlives its timeout and reports 124', async () => {
+      const events: ExecEvent[] = [];
+      const started = Date.now();
+
+      for await (const event of session.execStream(
+        'echo before; sleep 30; echo after',
+        { timeoutMs: 300 }
+      )) {
+        events.push(event);
+      }
+
+      expect(Date.now() - started).toBeLessThan(10_000);
+      const output = events
+        .filter((e) => e.type === 'stdout' || e.type === 'stderr')
+        .map((e) => e.data);
+      expect(output).toEqual(['before\n', 'Command timed out after 300ms\n']);
+      expect(events.at(-1)).toMatchObject({ type: 'complete', exitCode: 124 });
     });
 
     it('should stream stderr separately', async () => {

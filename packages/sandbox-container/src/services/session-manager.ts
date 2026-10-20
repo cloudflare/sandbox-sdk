@@ -674,6 +674,7 @@ export class SessionManager {
       cwd?: string;
       env?: Record<string, string | undefined>;
       origin?: 'user' | 'internal';
+      timeoutMs?: number;
     } = {},
     commandId: string,
     lockOptions: { background?: boolean } = {}
@@ -715,13 +716,14 @@ export class SessionManager {
       cwd?: string;
       env?: Record<string, string | undefined>;
       origin?: 'user' | 'internal';
+      timeoutMs?: number;
     },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     return lock.runExclusive(async () => {
       try {
-        const { cwd, env, origin } = options;
+        const { cwd, env, origin, timeoutMs } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -738,7 +740,8 @@ export class SessionManager {
           commandId,
           cwd,
           env,
-          origin
+          origin,
+          timeoutMs
         });
 
         // Process ALL events under lock
@@ -818,6 +821,7 @@ export class SessionManager {
       cwd?: string;
       env?: Record<string, string | undefined>;
       origin?: 'user' | 'internal';
+      timeoutMs?: number;
     },
     commandId: string,
     lock: Mutex
@@ -825,7 +829,7 @@ export class SessionManager {
     // Acquire lock for startup phase only
     const startupResult = await lock.runExclusive(async () => {
       try {
-        const { cwd, env, origin } = options;
+        const { cwd, env, origin, timeoutMs } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -840,7 +844,8 @@ export class SessionManager {
           commandId,
           cwd,
           env,
-          origin
+          origin,
+          timeoutMs
         });
 
         // Process 'start' event under lock
