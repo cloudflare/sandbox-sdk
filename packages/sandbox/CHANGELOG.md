@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 1.0.2
+
+### Patch Changes
+
+- [#1001](https://github.com/cloudflare/sandbox-sdk/pull/1001) [`2d458d1`](https://github.com/cloudflare/sandbox-sdk/commit/2d458d190843a1f62881e4f9d4ed959b1e98d531) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `Files.readFile()` hanging forever when the container sends file bytes before the opening control frame. The read now completes however the container transport orders the two streams.
+
 ## 1.0.1
 
 ### Patch Changes
