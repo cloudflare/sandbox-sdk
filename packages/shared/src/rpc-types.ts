@@ -79,7 +79,13 @@ export interface ReadFileOptions {
 
 export interface WriteFileOptions {
   encoding?: string;
-  permissions?: string;
+  /**
+   * Create a new file readable only by its owner (mode 0600), and fail if the
+   * path already exists. A container image without this option ignores it
+   * and creates the file with the default mode, so a caller that needs mode
+   * 0600 still chmods after writing.
+   */
+  ownerOnly?: boolean;
 }
 
 export interface MkdirOptions {

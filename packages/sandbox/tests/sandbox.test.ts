@@ -3920,6 +3920,22 @@ describe('Sandbox durable object behavior', () => {
       ).resolves.toBeUndefined();
     });
 
+    it('creates the s3fs password file owner-only before writing credentials', async () => {
+      mockMountScript({ exitCode: 0 });
+      const { files, mounts } = asSandboxWithClient(sandbox).client;
+
+      await sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions);
+
+      expect(files.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('/tmp/.passwd-s3fs-'),
+        'my-bucket:AKID:SECRET',
+        { ownerOnly: true }
+      );
+      const passwordFilePath = vi.mocked(files.writeFile).mock.calls[0][0];
+      // The chmod covers container images that ignore ownerOnly.
+      expect(mounts.chmodOwnerOnly).toHaveBeenCalledWith(passwordFilePath);
+    });
+
     it('throws when the s3fs parent exits non-zero', async () => {
       mockMountScript({ exitCode: 2, stdout: 'fuse: bad mount point' });
 

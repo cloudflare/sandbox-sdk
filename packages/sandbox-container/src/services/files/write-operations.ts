@@ -1,4 +1,4 @@
-import { chmod, rename, stat, unlink } from 'node:fs/promises';
+import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
 import { logCanonicalEvent, shellEscape } from '@repo/shared';
@@ -107,7 +107,14 @@ export class FileWriteOperations extends FileReadOperations {
             normalizedEncoding === 'base64'
               ? Buffer.from(content, 'base64')
               : content;
-          await Bun.write(targetPath, data);
+          if (options.ownerOnly) {
+            // Create the file with its final mode, so no other user can open
+            // it before a later chmod. Refusing an existing path also refuses
+            // a symlink planted there.
+            await writeFile(targetPath, data, { mode: 0o600, flag: 'wx' });
+          } else {
+            await Bun.write(targetPath, data);
+          }
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown error';

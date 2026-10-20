@@ -497,7 +497,8 @@ describe('Sandbox credential proxy mounts', () => {
       asSandboxWithClient(sandbox).client.files.writeFile
     ).toHaveBeenCalledWith(
       expect.stringContaining('/tmp/.passwd-s3fs-'),
-      'my-bucket:x:x'
+      'my-bucket:x:x',
+      { ownerOnly: true }
     );
   });
 
