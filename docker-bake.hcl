@@ -9,7 +9,9 @@
 variable "TAG" { default = "dev" }
 variable "SANDBOX_VERSION" { default = "dev" }
 variable "BUN_VERSION" { default = "1.3" }
-variable "NODE_VERSION" { default = "22" }
+// Exact Node.js release. Stable releases reuse the image built for the Version
+// Packages PR, so a floating tag would ship whatever that build pulled.
+variable "NODE_VERSION" { default = "22.23.4" }
 variable "CACHE_REPO" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)
