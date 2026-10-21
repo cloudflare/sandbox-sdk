@@ -4,7 +4,7 @@ ARG BUN_VERSION=1.3.14
 ARG NODE_VERSION=24
 # cloudflared release — shared across glibc and musl image variants.
 # Bump this together with the architecture-specific checksums below.
-ARG CLOUDFLARED_VERSION=2026.3.0
+ARG CLOUDFLARED_VERSION=2026.10.2
 # fuse-overlayfs release — backs the copy-on-write layer of restored backups.
 # Pinned upstream because Ubuntu 22.04 ships 1.7.1, which returns EEXIST when
 # a restored directory is deleted, recreated and listed before files are
@@ -42,8 +42,8 @@ FROM release-downloader AS cloudflared-binary
 
 ARG TARGETARCH
 ARG CLOUDFLARED_VERSION
-ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
-ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
+ARG CLOUDFLARED_SHA256_AMD64=35fbdd2beb378436c7da377d7358cea8e33f9c94a6705d1d8036bf9b0d6d8005
+ARG CLOUDFLARED_SHA256_ARM64=b7e55b4d9702c2ab5f8348f780bb1db044527fc555367714c78e0595750a4665
 
 RUN set -eux; \
     arch="${TARGETARCH:-}"; \
@@ -286,7 +286,11 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python
 # Install Python packages for data science and the code interpreter extension.
 # The interpreter runtime itself is provisioned by the @cloudflare/sandbox/interpreter
 # extension; this image only provides the Python toolchain it relies on.
+# pip trusts its vendored certifi bundle on top of the system store, so the pip
+# that ships with python-build-standalone is upgraded first. 26.2.2 is the
+# first release whose bundle rejects the compromised eMudhra intermediates.
 RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir --upgrade 'pip>=26.2.2' && \
     pip3 install --no-cache-dir matplotlib numpy pandas ipython
 
 # Pre-warm pool sizes consumed by the interpreter extension sidecar
