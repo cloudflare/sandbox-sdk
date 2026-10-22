@@ -111,6 +111,14 @@ describe("Files.readDirectory", () => {
     ).rejects.toThrow("invalid UTF-8 in directory entry name");
   });
 
+  it("keeps a leading U+FEFF in entry names", async () => {
+    const payload = directoryPayload([{ name: "\uFEFFnotes.txt", type: 0 }]);
+
+    await expect(
+      new Files(containerWith(commandProcess(dataFrame(payload)))).readDirectory("/dir"),
+    ).resolves.toEqual([{ name: "\uFEFFnotes.txt", type: "file" }]);
+  });
+
   it("propagates native exec errors unchanged", async () => {
     const nativeError = new Error("container is not running");
     const container = containerRejecting(nativeError);

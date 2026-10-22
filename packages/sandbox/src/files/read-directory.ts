@@ -78,7 +78,8 @@ function readBytes(payload: Uint8Array, offset: number, length: number): Uint8Ar
 
 function decodeText(bytes: Uint8Array): string {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A leading U+FEFF is part of the file name, not a byte order mark.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (cause) {
     throw protocolError("sandbox-shim returned invalid UTF-8 in directory entry name", cause);
   }
