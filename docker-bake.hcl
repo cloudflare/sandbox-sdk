@@ -8,7 +8,7 @@
 
 variable "TAG" { default = "dev" }
 variable "SANDBOX_VERSION" { default = "dev" }
-variable "BUN_VERSION" { default = "1.3" }
+variable "BUN_VERSION" { default = "1.4" }
 // Exact Node.js release, so the images ship this version rather than whatever
 // node:22-slim points to when they are built.
 variable "NODE_VERSION" { default = "22.23.4" }
