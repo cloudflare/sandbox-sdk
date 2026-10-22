@@ -1,3 +1,4 @@
+import { getCACertificates } from 'node:tls';
 import type { Logger } from '@repo/shared';
 import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import {
@@ -464,7 +465,12 @@ export class BackupService {
           },
           body,
           signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS),
-          ...(runtimeCertPEM && { tls: { ca: runtimeCertPEM } })
+          // Bun 1.4 trusts only the certificates in `tls.ca`, so keep the
+          // default store next to the interception CA for parts that go
+          // straight to R2.
+          ...(runtimeCertPEM && {
+            tls: { ca: [...getCACertificates('default'), runtimeCertPEM] }
+          })
         });
 
         if (!response.ok) {
