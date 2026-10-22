@@ -286,6 +286,94 @@ describe('Backup Workflow E2E', () => {
     }, 120000);
   });
 
+  describe('Large presigned backup', () => {
+    // Archives of 10 MiB or more upload as parallel parts that the container
+    // sends to R2 itself with the container runtime's fetch() and CA list.
+    // Smaller archives upload through curl, so only a large archive covers
+    // this path. Random data keeps the squashfs archive above the threshold.
+    test('should round-trip a 24 MiB backup through multipart presigned uploads', async () => {
+      if (!backupBucketAvailable) return;
+
+      const TEST_DIR = `/workspace/large-presigned-backup-${crypto.randomUUID().slice(0, 8)}`;
+
+      const seedResult = (await (
+        await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: shellCommand([
+              `mkdir -p ${TEST_DIR}`,
+              `dd if=/dev/urandom of=${TEST_DIR}/blob.bin bs=1M count=24 status=none`,
+              `sha256sum ${TEST_DIR}/blob.bin`
+            ])
+          })
+        })
+      ).json()) as ExecuteResponse;
+      expect(seedResult.exitCode).toBe(0);
+      const originalSha = seedResult.stdout?.trim().split(/\s+/)[0];
+      expect(originalSha).toMatch(/^[0-9a-f]{64}$/);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          dir: TEST_DIR,
+          name: 'large-presigned-backup',
+          ttl: 3600
+        })
+      });
+      if (!backupResponse.ok) {
+        throw new Error(`createBackup failed: ${await backupResponse.text()}`);
+      }
+      const backup = (await backupResponse.json()) as BackupResponse;
+      expect(backup.id).toBeDefined();
+
+      // Overwrite the file so that only a real restore brings back the
+      // original bytes.
+      const mutateResult = (await (
+        await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: shellCommand([
+              `echo gone > ${TEST_DIR}/blob.bin`,
+              `sha256sum ${TEST_DIR}/blob.bin`
+            ])
+          })
+        })
+      ).json()) as ExecuteResponse;
+      expect(mutateResult.exitCode).toBe(0);
+      expect(mutateResult.stdout?.trim().split(/\s+/)[0]).not.toBe(originalSha);
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      if (!restoreResponse.ok) {
+        throw new Error(
+          `restoreBackup failed: ${await restoreResponse.text()}`
+        );
+      }
+      const restoreResult = (await restoreResponse.json()) as RestoreResponse;
+      expect(restoreResult.success).toBe(true);
+
+      const verifyResult = (await (
+        await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: shellCommand([`sha256sum ${TEST_DIR}/blob.bin`])
+          })
+        })
+      ).json()) as ExecuteResponse;
+      expect(verifyResult.exitCode).toBe(0);
+      expect(verifyResult.stdout?.trim().split(/\s+/)[0]).toBe(originalSha);
+
+      await cleanupDir(workerUrl, headers, TEST_DIR);
+    }, 180000);
+  });
+
   describe('Backup excludes', () => {
     test('should include gitignored files by default', async () => {
       if (!backupBucketAvailable) return;
