@@ -92,6 +92,11 @@ jobs:
       - name: Test with real mounts
         run: npm run test:shim-mounts
 
+      # The S3 tests run these images without downloading anything, so a slow download fails
+      # here, by name, instead of inside a test timeout.
+      - name: Build S3 test fixtures
+        run: npm run test:s3-fixtures
+
       - name: Test S3 gateway with MinIO and s3fs
         run: npm run test:s3-e2e
 

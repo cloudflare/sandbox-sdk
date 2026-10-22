@@ -1,17 +1,16 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { type AddressInfo } from "node:net";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
 
 import { AwsClient } from "aws4fetch";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { S3Gateway, S3Mount, type S3MountRequest } from "../src/index.js";
+import { docker, MINIO_IMAGE, S3FS_IMAGE, SOCAT_IMAGE } from "./s3-fixtures.js";
 import { TestExecutionContext, TestFetcher } from "./worker-test-doubles.js";
 
-const runExecFile = promisify(execFile);
 const enabled = process.env.SANDBOX_S3_LIFECYCLE === "1";
 const describeLifecycle = enabled ? describe : describe.skip;
 const accessKeyId = "release-access-key";
@@ -19,11 +18,12 @@ const secretAccessKey = "release-secret-key";
 const testId = `${process.pid}-${Date.now()}`;
 const toolsImage = `sandbox-tools-lifecycle-test-${testId}`;
 const image = `sandbox-s3-lifecycle-test-${testId}`;
-const minioImage = `sandbox-s3-minio-lifecycle-test-${testId}`;
-const socatImage =
-  "alpine/socat@sha256:c5a091e1e735a90aa941a5828529dbe6c6157407a8047a9aa473faa133361b82";
 const extraCa = process.env.SANDBOX_EXTRA_CA;
 const extraCaSecret = extraCa ? ["--secret", `id=extra_ca,src=${extraCa}`] : [];
+// Builds reuse the shim that `npm run shim:check` compiled; a cold build compiles it again.
+const BUILD_TIMEOUT_MS = 300_000;
+// Longer than any one command's timeout, so a hung command fails with an error that names it.
+const SETUP_TIMEOUT_MS = 600_000;
 
 interface RouteFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
@@ -52,36 +52,45 @@ describeLifecycle("public S3 mount lifecycle", () => {
   let endpoint: string;
 
   beforeAll(async () => {
-    await docker([
-      "build",
-      "--platform",
-      "linux/amd64",
-      ...extraCaSecret,
-      "--target",
-      "image",
-      "--tag",
-      toolsImage,
-      "--file",
-      "images/sandbox-tools/Dockerfile",
-      ".",
-    ]);
-    await docker([
-      "build",
-      "--platform",
-      "linux/amd64",
-      "--tag",
-      image,
-      "--build-arg",
-      `SANDBOX_TOOLS_IMAGE=${toolsImage}`,
-      "--file",
-      "packages/sandbox/tests/fixtures/s3-lifecycle/Dockerfile",
-      ".",
-    ]);
-    await docker(["build", "--tag", minioImage, "packages/sandbox/tests/fixtures/minio"]);
+    await docker(
+      [
+        "build",
+        "--platform",
+        "linux/amd64",
+        ...extraCaSecret,
+        "--target",
+        "image",
+        "--tag",
+        toolsImage,
+        "--file",
+        "images/sandbox-tools/Dockerfile",
+        ".",
+      ],
+      BUILD_TIMEOUT_MS,
+    );
+    await docker(
+      [
+        "build",
+        "--platform",
+        "linux/amd64",
+        "--tag",
+        image,
+        "--build-arg",
+        `SANDBOX_TOOLS_IMAGE=${toolsImage}`,
+        "--build-arg",
+        `S3FS_IMAGE=${S3FS_IMAGE}`,
+        "--file",
+        "packages/sandbox/tests/fixtures/s3-lifecycle/Dockerfile",
+        ".",
+      ],
+      BUILD_TIMEOUT_MS,
+    );
     await docker(["network", "create", network]);
     await docker([
       "run",
       "--detach",
+      "--pull",
+      "never",
       "--name",
       minio,
       "--publish",
@@ -90,7 +99,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
       `MINIO_ROOT_USER=${accessKeyId}`,
       "--env",
       `MINIO_ROOT_PASSWORD=${secretAccessKey}`,
-      minioImage,
+      MINIO_IMAGE,
       "server",
       "/data",
     ]);
@@ -103,7 +112,10 @@ describeLifecycle("public S3 mount lifecycle", () => {
       region: "us-east-1",
       service: "s3",
     });
-    const created = await client.fetch(`${endpoint}/models`, { method: "PUT" });
+    const created = await client.fetch(`${endpoint}/models`, {
+      method: "PUT",
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!created.ok)
       throw new Error(`bucket creation failed: ${created.status} ${await created.text()}`);
 
@@ -119,13 +131,15 @@ describeLifecycle("public S3 mount lifecycle", () => {
     await docker([
       "run",
       "--detach",
+      "--pull",
+      "never",
       "--name",
       proxy,
       "--network",
       network,
       "--add-host",
       "host.docker.internal:host-gateway",
-      socatImage,
+      SOCAT_IMAGE,
       "-dd",
       "TCP-LISTEN:80,fork,reuseaddr",
       `TCP:host.docker.internal:${bridgePort}`,
@@ -134,6 +148,8 @@ describeLifecycle("public S3 mount lifecycle", () => {
     await docker([
       "run",
       "--detach",
+      "--pull",
+      "never",
       "--name",
       workspace,
       "--network",
@@ -145,13 +161,13 @@ describeLifecycle("public S3 mount lifecycle", () => {
       "/dev/null",
     ]);
     container = new DockerContainer(workspace, proxyAddress, routes);
-  }, 120_000);
+  }, SETUP_TIMEOUT_MS);
 
   afterAll(async () => {
-    await docker(["rm", "--force", workspace, proxy, minio], false);
+    await docker(["rm", "--force", workspace, proxy, minio]).catch(() => "");
     if (bridge !== undefined) await new Promise<void>((resolve) => bridge.close(() => resolve()));
-    await docker(["network", "rm", network], false);
-    await docker(["image", "rm", "--force", image, toolsImage, minioImage], false);
+    await docker(["network", "rm", network]).catch(() => "");
+    await docker(["image", "rm", "--force", image, toolsImage]).catch(() => "");
   });
 
   it("mounts, adopts, inspects, denies, retries, and unmounts", async () => {
@@ -416,16 +432,6 @@ async function bridgeRequest(
   }
 }
 
-async function docker(args: string[], reject = true): Promise<string> {
-  try {
-    const result = await runExecFile("docker", args, { maxBuffer: 20 * 1024 * 1024 });
-    return result.stdout;
-  } catch (error) {
-    if (!reject) return "";
-    throw error;
-  }
-}
-
 async function publishedPort(container: string, port: number): Promise<number> {
   const output = await docker(["port", container, `${port}/tcp`]);
   const match = /^127\.0\.0\.1:(\d+)$/m.exec(output);
@@ -447,9 +453,12 @@ async function containerAddress(container: string, network: string): Promise<str
 async function waitForMinio(endpoint: string): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
-      if ((await fetch(`${endpoint}/minio/health/ready`)).ok) return;
+      const response = await fetch(`${endpoint}/minio/health/ready`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (response.ok) return;
     } catch {
-      // MinIO has not bound its published port yet.
+      // MinIO has not bound its published port yet, or has not answered yet.
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
