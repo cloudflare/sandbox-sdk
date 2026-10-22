@@ -191,19 +191,30 @@ describe('ProcessLogStore', () => {
   it('bounds a non-reading follower and resumes it at the retained tail', async () => {
     const store = new ProcessLogStore('run-1', { maxBytes: 10, maxEvents: 1 });
     const reader = store.subscribe({ replay: false, follow: true }).getReader();
+    // Let the subscription's pipe issue its first read, as it has by the time
+    // a running process writes output. The pipe and the stream queue then
+    // hold one event each.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     store.appendOutput('stdout', bytes(1));
     store.appendOutput('stdout', bytes(2));
-    store.appendOutput('stderr', bytes(3));
+    store.appendOutput('stdout', bytes(3));
+    store.appendOutput('stderr', bytes(4));
 
-    const queued = await reader.read();
+    const first = await reader.read();
+    const second = await reader.read();
     const truncated = await reader.read();
     const tail = await reader.read();
-    if (queued.value?.type !== 'stdout' || tail.value?.type !== 'stderr') {
+    if (
+      first.value?.type !== 'stdout' ||
+      second.value?.type !== 'stdout' ||
+      tail.value?.type !== 'stderr'
+    ) {
       throw new Error('Expected retained output events');
     }
-    expect(queued.value.data).toEqual(bytes(1));
+    expect(first.value.data).toEqual(bytes(1));
+    expect(second.value.data).toEqual(bytes(2));
     expect(truncated.value?.type).toBe('truncated');
-    expect(tail.value.data).toEqual(bytes(3));
+    expect(tail.value.data).toEqual(bytes(4));
     await reader.cancel();
   });
 
