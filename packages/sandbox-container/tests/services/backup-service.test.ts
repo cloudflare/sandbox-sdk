@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
+import { getCACertificates } from 'node:tls';
 import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
@@ -239,7 +240,7 @@ describe('BackupService', () => {
       expect(mockFetch.mock.calls[0]?.[1]).not.toHaveProperty('tls');
     });
 
-    it('passes the runtime interception CA to multipart fetch', async () => {
+    it('trusts the runtime interception CA and the default CAs for multipart fetch', async () => {
       const runtimeCertPEM =
         '-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----';
       service = new BackupService(
@@ -270,7 +271,9 @@ describe('BackupService', () => {
       expect(result.success).toBe(true);
       expect(mockFetch).toHaveBeenCalledWith(
         'https://example.com/part-1',
-        expect.objectContaining({ tls: { ca: runtimeCertPEM } })
+        expect.objectContaining({
+          tls: { ca: [...getCACertificates('default'), runtimeCertPEM] }
+        })
       );
     });
 
