@@ -14,7 +14,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/sandbox": "^0.12.13",
+    "@cloudflare/sandbox": "^0.12.14",
     "ai": "^6.0.287",
     "workers-ai-provider": "^3.0.3",
     "zod": "^4.0.0"

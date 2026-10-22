@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.14
+
+### Patch Changes
+
+- [#1028](https://github.com/cloudflare/sandbox-sdk/pull/1028) [`2e4e1eb`](https://github.com/cloudflare/sandbox-sdk/commit/2e4e1eb304e2cbbf5569e095e3ead296a5efbc87) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Update the container runtime to Bun 1.4.4. Bun checks certificates against its own built-in CA list, and in 1.4.4 that list no longer trusts the compromised eMudhra intermediates, so the `bun` command and `createBackup()` uploads of 10 MiB or more now reject their certificates. Bun 1.4.4 also updates Brotli to 1.2.1, which fixes CVE-2026-111497. The `-opencode` image ships OpenCode 1.19.4 or later, which also runs on Bun 1.4.4.
+
 ## 0.12.13
 
 ### Patch Changes
