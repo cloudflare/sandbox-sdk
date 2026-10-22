@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 1.0.3
+
+### Patch Changes
+
+- [#1030](https://github.com/cloudflare/sandbox-sdk/pull/1030) [`2d5a2a8`](https://github.com/cloudflare/sandbox-sdk/commit/2d5a2a8250f9958e364e5ebc65ac53710f86cadc) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `Files.readDirectory()` dropping a leading U+FEFF from entry names. Names that start with U+FEFF now come back unchanged, so passing them to `stat()` or other file operations finds the entry.
+
 ## 1.0.2
 
 ### Patch Changes
