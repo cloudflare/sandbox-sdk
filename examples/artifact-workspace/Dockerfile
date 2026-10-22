@@ -1,6 +1,6 @@
 # The donor image ships the shim that @cloudflare/sandbox runs in the container.
 # Keep its tag equal to the installed @cloudflare/sandbox version.
-ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.2
+ARG SANDBOX_TOOLS_IMAGE=docker.io/cloudflare/sandbox:1.0.3
 ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
 
 FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
