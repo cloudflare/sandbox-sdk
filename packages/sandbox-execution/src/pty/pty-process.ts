@@ -44,7 +44,10 @@ export class PtyCompletionBarrier {
     this.#finish = finish;
   }
 
-  subprocessExited(code: number, signalCode: NodeJS.Signals | null): void {
+  subprocessExited(
+    code: number,
+    signalCode: NodeJS.Signals | number | null
+  ): void {
     try {
       this.#state.subprocessResult = {
         state: 'exited',
@@ -319,7 +322,7 @@ export class PtyProcess implements AsyncDisposable {
 
 function observedExit(
   code: number,
-  signalCode: NodeJS.Signals | null,
+  signalCode: NodeJS.Signals | number | null,
   timedOut: boolean
 ): RuntimeProcessExit {
   if (!Number.isInteger(code)) {

@@ -156,6 +156,19 @@ describe('ManagedProcessSupervisor', () => {
     expect(handled.exit.signal).toBeUndefined();
   });
 
+  test('reports a real-time signal by its number', async () => {
+    await using supervisor = new ManagedProcessSupervisor();
+    const managed = await supervisor.start({
+      runId: 'realtime-killed',
+      command: ['sleep', '30']
+    });
+    await managed.kill(40);
+    expect(await managed.waitForExit()).toMatchObject({
+      state: 'exited',
+      exit: { code: 168, signal: 40, timedOut: false }
+    });
+  });
+
   test('kill defaults to TERM and accepts every integer signal from 1 through 64', async () => {
     const delivered: number[] = [];
     setManagedProcessSupervisorTestHooks({
