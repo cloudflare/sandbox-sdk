@@ -8,7 +8,7 @@
     "types": "wrangler types --include-runtime=false"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "1.0.2"
+    "@cloudflare/sandbox": "1.0.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261008.1",
