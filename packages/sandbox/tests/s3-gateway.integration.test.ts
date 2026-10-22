@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { buffer } from "node:stream/consumers";
-import { promisify } from "node:util";
 
 import { AwsClient } from "aws4fetch";
 import * as z from "zod/mini";
@@ -9,18 +7,13 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { type ActiveS3GatewayProps } from "../src/s3-mount/contracts.js";
 import { handleS3GatewayRequest } from "../src/s3-mount/gateway.js";
+import { docker, MINIO_IMAGE, S3FS_IMAGE } from "./s3-fixtures.js";
 
-const run = promisify(execFile);
 const addressSchema = z.object({ port: z.number().check(z.int(), z.positive()) });
-const MINIO_BUILD_CONTEXT = "packages/sandbox/tests/fixtures/minio";
-const S3FS_IMAGE =
-  "ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254";
-const S3FS_VERSION = "1.93-1build3";
 const ACCESS_KEY = "sandbox-integration-access";
 const SECRET_KEY = "sandbox-integration-secret";
 
 const containers = new Set<string>();
-const images = new Set<string>();
 const servers = new Set<Server>();
 
 interface ObservedRequest {
@@ -33,15 +26,9 @@ interface ObservedRequest {
 
 afterEach(async () => {
   await Promise.all(
-    Array.from(containers, (name) => run("docker", ["rm", "--force", name]).catch(() => undefined)),
+    Array.from(containers, (name) => docker(["rm", "--force", name]).catch(() => "")),
   );
   containers.clear();
-  await Promise.all(
-    Array.from(images, (image) =>
-      run("docker", ["image", "rm", "--force", image]).catch(() => undefined),
-    ),
-  );
-  images.clear();
   await Promise.all(
     Array.from(
       servers,
@@ -162,13 +149,13 @@ describe.skipIf(process.env.SANDBOX_S3_E2E !== "1")("S3 gateway with MinIO and s
 
 async function startMinio(): Promise<{ endpoint: string }> {
   const name = `sandbox-s3-minio-${crypto.randomUUID()}`;
-  images.add(name);
-  await run("docker", ["build", "--quiet", "--tag", name, MINIO_BUILD_CONTEXT]);
   containers.add(name);
-  await run("docker", [
+  await docker([
     "run",
     "--detach",
     "--rm",
+    "--pull",
+    "never",
     "--name",
     name,
     "--env",
@@ -177,11 +164,11 @@ async function startMinio(): Promise<{ endpoint: string }> {
     `MINIO_ROOT_PASSWORD=${SECRET_KEY}`,
     "--publish",
     "127.0.0.1::9000",
-    name,
+    MINIO_IMAGE,
     "server",
     "/data",
   ]);
-  const { stdout } = await run("docker", ["port", name, "9000/tcp"]);
+  const stdout = await docker(["port", name, "9000/tcp"]);
   const match = /127\.0\.0\.1:(\d+)/.exec(stdout);
   if (match?.[1] === undefined) throw new Error(`cannot determine MinIO port from ${stdout}`);
   const endpoint = `http://127.0.0.1:${match[1]}`;
@@ -193,11 +180,11 @@ async function waitUntilReady(url: string): Promise<void> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
       lastStatus = response.status;
       if (response.ok) return;
     } catch {
-      // The container may not have bound its socket yet.
+      // The container may not have bound its socket or answered yet.
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -261,9 +248,6 @@ async function runS3fs(gatewayPort: number): Promise<void> {
   containers.add(name);
   const script = `
 set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq s3fs=${S3FS_VERSION} >/dev/null
 printf 'sandbox-access-key:sandbox-secret-key\\n' >/tmp/passwd-s3fs
 chmod 600 /tmp/passwd-s3fs
 mkdir -p /mnt/s3
@@ -289,11 +273,12 @@ rm /mnt/s3/large.bin
 fusermount -u /mnt/s3
 trap - EXIT
 `;
-  await run(
-    "docker",
+  await docker(
     [
       "run",
       "--rm",
+      "--pull",
+      "never",
       "--privileged",
       "--name",
       name,
@@ -304,7 +289,7 @@ trap - EXIT
       "-lc",
       script,
     ],
-    { maxBuffer: 16 * 1_024 * 1_024 },
+    120_000,
   );
   containers.delete(name);
 }

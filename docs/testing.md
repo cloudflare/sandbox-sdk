@@ -61,7 +61,9 @@ The Rust tests run inside the Linux build, so Linux-specific behavior is tested 
 | `npm run test:s3-e2e`       | `S3Gateway` authorizes, signs, and forwards the requests that a real `s3fs` sends to MinIO for reads, writes, renames, directories, multipart uploads, and deletes | Docker, privileged containers |
 | `npm run test:s3-lifecycle` | The shim mounts, reuses, inspects, denies, retries, and unmounts a real `s3fs` mount                                                                               | Docker, privileged containers |
 
-The S3 tests start MinIO and an `s3fs` container, and reach services on the host through `host.docker.internal`. They remove the containers, networks, and images they create when they finish.
+The S3 tests start MinIO and an `s3fs` container, and reach services on the host through `host.docker.internal`. They remove the containers and networks they create when they finish.
+
+Both commands first run `npm run test:s3-fixtures`, which builds or pulls the images the tests run: `s3fs` on Ubuntu, MinIO, and `socat`. It retries each download with a timeout. Each built image is tagged with a hash of its Dockerfile under `packages/sandbox/tests/fixtures`, so later runs reuse the images until a Dockerfile changes. Remove them with `docker image rm` when you no longer need them. The tests themselves download nothing, except that `test:s3-lifecycle` builds the shim image, which reuses the build cache from `npm run shim:check`. Run `shim:check` first so that build doesn't compile the shim again.
 
 `npm run test:s3-native-local` runs the full mount lifecycle under `wrangler dev`. It is not part of `test:release`, because it needs Wrangler and workerd builds that are not released yet. Set `SANDBOX_WRANGLER_PATH` and `MINIFLARE_WORKERD_PATH` to local checkouts that contain the commits listed in `packages/sandbox/tests/s3-native-local.integration.test.ts`.
 
@@ -73,7 +75,7 @@ Pull requests into `main` and `next` need two passing checks and an approving re
 
 - **TypeScript** runs `check:ts`, `examples:check-bundles`, `example -- check-versions`, `example -- sync-runner --check`, `test:unit`, and `test:package`. `examples:check-bundles` bundles every example without deploying it, and fails unless the package came from its local build. `check-versions` fails unless every example names the same package version and donor image tag. `sync-runner --check` fails unless each coding agent's copy of the runner matches `examples/coding-agents/runner`.
 - **Examples** runs `example -- check-standalone`, which installs each example outside the repository from npm, type-checks it, and bundles it. See [Examples](examples.md#check-it).
-- **Shim** runs `shim:check` and then the three tests in the table above that need privileged containers. They all build from the same Dockerfile on one Docker daemon, so the shim compiles once.
+- **Shim** runs `shim:check` and then the three tests in the table above that need privileged containers. They all build from the same Dockerfile on one Docker daemon, so the shim compiles once. It runs `test:s3-fixtures` as a step of its own before the S3 tests, so a slow download fails that step instead of a test.
 
 When a job fails, re-run only that job.
 
