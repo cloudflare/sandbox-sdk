@@ -48,16 +48,16 @@
     "test:node": "vitest run --config vitest.node.config.ts"
   },
   "dependencies": {
-    "openai": "^7.34.0",
+    "openai": "^7.43.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.23.0",
     "@types/node": "^24.19.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^4.1.12",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.152.0"
   },
   "overrides": {
     "@cloudflare/vitest-pool-workers": {
