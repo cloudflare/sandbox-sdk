@@ -20,8 +20,9 @@ const agentToolingIgnorePatterns = [
 const standaloneTemplatePatterns = ["templates/**"];
 
 // Copies of examples/coding-agents/runner, which is formatted and linted in their place.
-// `npm run example -- sync-runner --check` keeps them identical to it.
-const generatedPatterns = ["examples/coding-agents/*/src/runner/**"];
+// `npm run example -- sync-runner --check` keeps them identical to it. And Gardener's files,
+// which `gardener generate` checks byte for byte against what it would write.
+const generatedPatterns = ["examples/coding-agents/*/src/runner/**", ".gardener/**"];
 
 export default defineConfig({
   defaultPackage: {

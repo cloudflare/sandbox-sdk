@@ -1,1 +1,15 @@
 * @ghostwriternr @scuffi @aron-cf
+
+# Dependency files have no owner, so an approval from Gardener's dependabot-merge task satisfies
+# the review rule for Dependabot pull requests that change only these files. That task approves
+# only Dependabot's pull requests, after every check passed. See
+# .gardener/tasks/dependabot-merge/TASK.md, which lists the same files.
+/package.json
+/package-lock.json
+/Cargo.lock
+/examples/**/package.json
+/examples/**/package-lock.json
+/examples/**/Dockerfile
+/templates/**/package.json
+/templates/**/package-lock.json
+/templates/**/Dockerfile
