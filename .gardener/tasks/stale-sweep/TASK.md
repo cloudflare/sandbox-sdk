@@ -60,19 +60,19 @@ its commits (the last commit's `commit.committer.date` is when the author last p
 
 Give each open issue the first verdict that fits:
 
+- **The author answered:** it has the `question` label and the issue's author commented after the
+  latest maintainer or `github-actions[bot]` comment. Remove the `question` label with
+  `issue.label.remove`, then treat it as unanswered below.
 - **Waiting on the author, closing:** it has the `question` label, a comment by `github-actions[bot]`
-  contains `<!-- gardener-stale:nudge -->`, and nobody but maintainers and bots has commented in the
-  14 days since that comment. Comment once (marker `<!-- gardener-stale:close -->`): thank them, say
-  it's being closed because the details needed to act on it didn't arrive, and that commenting with
-  them will get it reopened. Then `issue.close` with `reason` `not_planned`.
+  containing `<!-- gardener-stale:nudge -->` is more than 14 days old, and nobody but maintainers
+  and bots has commented since that nudge. Comment once (marker `<!-- gardener-stale:close -->`):
+  thank them, say it's being closed because the details needed to act on it didn't arrive, and that
+  commenting with them will get it reopened. Then `issue.close` with `reason` `not_planned`.
 - **Waiting on the author, nudging:** it has the `question` label, the latest comment is by a
   maintainer or `github-actions[bot]` and asks the author for something, and that comment is more
   than 14 days old. Comment once (marker `<!-- gardener-stale:nudge -->`), starting with `@` and the
   issue author's login: in one or two sentences, restate exactly what is still needed, and say the
   issue will be closed in two weeks without it.
-- **The author answered:** it has the `question` label and the issue's author commented after the
-  latest maintainer or `github-actions[bot]` comment. Remove the `question` label with
-  `issue.label.remove`, then treat it as unanswered below.
 - **Unanswered:** the latest comment is by someone who is neither a maintainer nor a bot, it is
   more than 3 days old, and it asks something or adds information a maintainer would respond to
   (not a "+1" or a thank-you). Or the issue has no comments at all and was opened more than 2 days

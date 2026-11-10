@@ -62,8 +62,9 @@ where it belongs.
 of code, new interfaces and breaking changes. Every fix is code we maintain for good, so a fix few
 people need isn't worth making, however small.
 
-- **Already fixed** on the default branch or in a release: say which change fixed it and which
-  version has it, then close it as completed.
+- **Already fixed** in the line the report is about (the default branch or a 1.x release for 1.x,
+  `v0` or a 0.x release for 0.x): say which change fixed it and which version has it, then close it
+  as completed. A fix on the default branch doesn't fix a 0.x report.
 - **High impact:** `priority: high`. Comment with the cause and the fix you recommend, why, and the
   alternatives you ruled out.
 - **Low impact (either cost):** `wontfix` and `priority: low`. Comment why in a sentence or two (a

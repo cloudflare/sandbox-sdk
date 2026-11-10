@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/stale-sweep/TASK.md
 # Task: stale-sweep
-# Bundle: sha256:8b00ee610d4eecc772fbc70285033436b83371d0a23165385ea32562bec29de8
+# Bundle: sha256:2b5037da913fe2bd5b549e1158e05f68b07baf5ff6e9b5f429716a1dd3827b91
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Stale sweep"
@@ -40,5 +40,5 @@ jobs:
       task-id: "stale-sweep"
       task-name: "Stale sweep"
       task-source: ".gardener/tasks/stale-sweep/TASK.md"
-      task-bundle-hash: 8b00ee610d4eecc772fbc70285033436b83371d0a23165385ea32562bec29de8
+      task-bundle-hash: 2b5037da913fe2bd5b549e1158e05f68b07baf5ff6e9b5f429716a1dd3827b91
       plan-timeout-minutes: 40
